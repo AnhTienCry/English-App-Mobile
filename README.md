@@ -2,7 +2,7 @@
 
 ## ⚙️ Cài đặt
 ```bash
-git clone https://github.com/tranvanphongw/english-app-mobile.git
+git clone https://github.com/lenhat8413/Learning-English-App.git
 cd english-app-mobile
 flutter pub get
 flutter run
