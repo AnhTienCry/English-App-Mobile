@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/api_client.dart';
+import '../config/api_config.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'progress_screen.dart';
 import 'video_screen.dart';
+import 'video_learning_screen.dart';
 import 'lesson_screen.dart';
 import 'vocabulary_screen.dart';
-import 'quiz_list_screen.dart';
+import 'quiz_screen.dart';
 import 'achievement_screen.dart';
 import 'notification_screen.dart';
+import 'debug_screen.dart';
+import 'translation_screen.dart';
+import 'interactive_video_screen.dart'; // Import InteractiveVideoScreen
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -32,14 +37,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _loadUserData() async {
     try {
-      final profileRes = await dio.get('/protected/me');
-      final progressRes = await dio.get('/progress/me');
+      final profileRes = await dio.get(ApiConfig.profileEndpoint);
       
-      setState(() {
-        userProfile = profileRes.data;
-        stats = progressRes.data['stats'];
-        isLoading = false;
-      });
+      // Try to get progress data
+      try {
+        final progressRes = await dio.get(ApiConfig.progressionEndpoint);
+        setState(() {
+          userProfile = profileRes.data;
+          stats = progressRes.data['stats'];
+          isLoading = false;
+        });
+      } catch (progressError) {
+        // If progress not found, try to initialize it
+        try {
+          await dio.post(ApiConfig.initializeProgressEndpoint);
+          final progressRes = await dio.get(ApiConfig.progressionEndpoint);
+          setState(() {
+            userProfile = profileRes.data;
+            stats = progressRes.data['stats'];
+            isLoading = false;
+          });
+        } catch (initError) {
+          // If initialization fails, just load profile without stats
+          setState(() {
+            userProfile = profileRes.data;
+            stats = null;
+            isLoading = false;
+          });
+        }
+      }
     } catch (e) {
       setState(() => isLoading = false);
       _showErrorDialog('Failed to load user data');
@@ -107,11 +133,11 @@ class _HomeScreenState extends State<HomeScreen> {
         onPressed: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const AchievementScreen()),
+            MaterialPageRoute(builder: (context) => const DebugScreen()),
           );
         },
-        backgroundColor: Colors.orange,
-        child: const Icon(Icons.emoji_events, color: Colors.white),
+        backgroundColor: Colors.red,
+        child: const Icon(Icons.bug_report, color: Colors.white),
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
@@ -326,12 +352,12 @@ class HomeTab extends StatelessWidget {
               Expanded(
                 child: _buildActionCard(
                   context,
-                  'Watch Videos',
+                  'Video Learning',
                   Icons.video_library_outlined,
                   Colors.orange,
                   () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const VideoScreen()),
+                    MaterialPageRoute(builder: (context) => const VideoLearningScreen()),
                   ),
                 ),
               ),
@@ -343,11 +369,39 @@ class HomeTab extends StatelessWidget {
                   Icons.quiz_outlined,
                   Colors.purple,
                   () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const QuizListScreen()),
-                    );
+                    // TODO: Replace with actual topic selection logic
+                    _showQuizSelection(context);
                   },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+          Row(
+            children: [
+              Expanded(
+                child: _buildActionCard(
+                  context,
+                  'Translation',
+                  Icons.translate,
+                  Colors.teal,
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const TranslationScreen()),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: _buildActionCard(
+                  context,
+                  'Progress',
+                  Icons.trending_up,
+                  Colors.indigo,
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const ProgressScreen()),
+                  ),
                 ),
               ),
             ],
@@ -525,6 +579,21 @@ class HomeTab extends StatelessWidget {
                   Colors.green,
                   'Completed Lesson 1: Basic Greetings',
                   '2 hours ago',
+                  onTap: () {
+                    // TODO: Replace with actual data
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => InteractiveVideoScreen(
+                          videoId: '60c72b969b1d8c001f8e4a9c',
+                          videoTitle: 'Basic Greetings',
+                          videoUrl: 'https://www.youtube.com/watch?v=gighAPt2r24',
+                          topicId: '60c72b969b1d8c001f8e4a9c',
+                          userId: '60c72b969b1d8c001f8e4a9a',
+                        ),
+                      ),
+                    );
+                  },
                 ),
                 const Divider(),
                 _buildActivityItem(
@@ -533,6 +602,15 @@ class HomeTab extends StatelessWidget {
                   'Quiz: Vocabulary Test',
                   '1 day ago',
                   score: '85%',
+                  onTap: () {
+                    // TODO: Replace with actual data
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const QuizScreen(topicId: '60c72b969b1d8c001f8e4a9c'),
+                      ),
+                    );
+                  },
                 ),
                 const Divider(),
                 _buildActivityItem(
@@ -540,6 +618,21 @@ class HomeTab extends StatelessWidget {
                   Colors.orange,
                   'Watched: Pronunciation Guide',
                   '2 days ago',
+                  onTap: () {
+                    // TODO: Replace with actual data
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => InteractiveVideoScreen(
+                          videoId: '60c72b969b1d8c001f8e4a9c',
+                          videoTitle: 'Pronunciation Guide',
+                          videoUrl: 'https://www.youtube.com/watch?v=gighAPt2r24',
+                          topicId: '60c72b969b1d8c001f8e4a9c',
+                          userId: '60c72b969b1d8c001f8e4a9a',
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
@@ -555,51 +648,57 @@ class HomeTab extends StatelessWidget {
     String title,
     String time, {
     String? score,
+    VoidCallback? onTap,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(width: 15),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
+    return InkWell(
+      onTap: onTap, // Make the item tappable
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(width: 15),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
+                  Text(
+                    time,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (score != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                Text(
-                  time,
+                child: Text(
+                  score,
                   style: TextStyle(
                     fontSize: 12,
-                    color: Colors.grey[600],
+                    fontWeight: FontWeight.bold,
+                    color: color,
                   ),
                 ),
-              ],
-            ),
-          ),
-          if (score != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
               ),
-              child: Text(
-                score,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: color,
-                ),
-              ),
-            ),
-        ],
+            if (onTap != null) // Show arrow if tappable
+              const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+          ],
+        ),
       ),
     );
   }
@@ -684,7 +783,8 @@ class HomeTab extends StatelessWidget {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const QuizListScreen()),
+                  // TODO: Replace with actual topic ID from your data
+                  MaterialPageRoute(builder: (context) => const QuizScreen(topicId: '60c72b969b1d8c001f8e4a9c')),
                 );
               },
             ),
@@ -696,7 +796,8 @@ class HomeTab extends StatelessWidget {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const QuizListScreen()),
+                  // TODO: Replace with actual topic ID from your data
+                  MaterialPageRoute(builder: (context) => const QuizScreen(topicId: '60c72b969b1d8c001f8e4a9a')),
                 );
               },
             ),

@@ -1,513 +1,908 @@
+import 'package:confetti/confetti.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'dart:convert';
-import 'dart:async';
-import '../api/api_client.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+import '../config/api_config.dart';
+import '../api/api_client.dart'; // Import global dio
 
 class QuizScreen extends StatefulWidget {
-  final String quizId;
-  final String quizTitle;
+  final String topicId;
+  final String lessonId;
 
-  const QuizScreen({
-    super.key,
-    required this.quizId,
-    required this.quizTitle,
-  });
+  const QuizScreen({super.key, this.topicId = '', this.lessonId = ''});
 
   @override
   State<QuizScreen> createState() => _QuizScreenState();
 }
 
-class _QuizScreenState extends State<QuizScreen> {
-  Map<String, dynamic>? quiz;
-  List<dynamic> questions = [];
-  int currentQuestionIndex = 0;
-  Map<String, String> userAnswers = {};
-  bool loading = true;
-  String? error;
-  bool quizCompleted = false;
-  Map<String, dynamic>? results;
-  
-  // Timer variables
-  Timer? timer;
-  int remainingSeconds = 0;
+class _QuizScreenState extends State<QuizScreen>
+    with SingleTickerProviderStateMixin {
+  final TextEditingController _fillController = TextEditingController();
+  List<dynamic> _questions = [];
+  int _currentIndex = 0;
+  int _correctCount = 0;
+  bool _isAnswered = false;
+  String? _selectedAnswer;
+  bool _isLoading = true;
+  bool _quizFinished = false;
+  final Stopwatch _timer = Stopwatch();
+  final Stopwatch _questionTimer = Stopwatch();
+
+  late AnimationController _animationController;
+  late Animation<double> _shakeAnimation;
+  late ConfettiController _confettiController;
 
   @override
   void initState() {
     super.initState();
-    fetchQuiz();
-  }
-
-  @override
-  void dispose() {
-    timer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> fetchQuiz() async {
-    setState(() {
-      loading = true;
-      error = null;
-    });
-
-    try {
-      final res = await dio.get('/quiz/${widget.quizId}');
-      setState(() {
-        quiz = res.data['quiz'];
-        questions = quiz?['questions'] ?? [];
-        loading = false;
-        
-        // Start timer if there's a time limit
-        if (quiz?['timeLimit'] != null) {
-          remainingSeconds = quiz!['timeLimit'];
-          startTimer();
-        }
-      });
-    } catch (e) {
-      setState(() {
-        error = 'Failed to load quiz';
-        loading = false;
-      });
-    }
-  }
-
-  void startTimer() {
-    timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        if (remainingSeconds > 0) {
-          remainingSeconds--;
-        } else {
-          timer.cancel();
-          submitQuiz();
-        }
-      });
-    });
-  }
-
-  String formatTime(int seconds) {
-    final mins = seconds ~/ 60;
-    final secs = seconds % 60;
-    return '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
-  }
-
-  Future<void> submitQuiz() async {
-    if (quizCompleted) return;
-
-    timer?.cancel();
-    setState(() => loading = true);
-
-    try {
-      final answers = userAnswers.entries.map((e) => {
-        'questionId': e.key,
-        'answer': e.value,
-      }).toList();
-
-      final timeSpent = quiz?['timeLimit'] != null 
-        ? quiz!['timeLimit'] - remainingSeconds 
-        : null;
-
-      final res = await dio.post('/quiz/${widget.quizId}/submit', data: {
-        'answers': answers,
-        'timeSpent': timeSpent,
-      });
-
-      setState(() {
-        results = res.data;
-        quizCompleted = true;
-        loading = false;
-      });
-    } catch (e) {
-      setState(() {
-        error = 'Failed to submit quiz';
-        loading = false;
-      });
-    }
-  }
-
-  void nextQuestion() {
-    if (currentQuestionIndex < questions.length - 1) {
-      setState(() => currentQuestionIndex++);
-    }
-  }
-
-  void previousQuestion() {
-    if (currentQuestionIndex > 0) {
-      setState(() => currentQuestionIndex--);
-    }
-  }
-
-  void selectAnswer(String questionId, String answer) {
-    setState(() {
-      userAnswers[questionId] = answer;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (loading) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.quizTitle)),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    if (error != null) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.quizTitle)),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(error!, style: const TextStyle(color: Colors.red)),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: fetchQuiz,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (quizCompleted && results != null) {
-      return buildResultsScreen();
-    }
-
-    if (questions.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.quizTitle)),
-        body: const Center(child: Text('No questions available')),
-      );
-    }
-
-    return buildQuizScreen();
-  }
-
-  Widget buildQuizScreen() {
-    final question = questions[currentQuestionIndex];
-    final questionId = question['id'];
-    final questionText = question['question'];
-    final questionType = question['type'];
-    final optionsJson = question['options'];
-    final explanation = question['explanation'];
-    
-    List<String> options = [];
-    if (optionsJson != null && optionsJson.isNotEmpty) {
-      try {
-        options = List<String>.from(json.decode(optionsJson));
-      } catch (e) {
-        options = [];
-      }
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.quizTitle),
-        actions: [
-          if (remainingSeconds > 0)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Center(
-                child: Text(
-                  formatTime(remainingSeconds),
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: remainingSeconds < 60 ? Colors.red : Colors.white,
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Progress bar
-          LinearProgressIndicator(
-            value: (currentQuestionIndex + 1) / questions.length,
-            backgroundColor: Colors.grey[300],
-            valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
-          ),
-          
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Question number and points
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Question ${currentQuestionIndex + 1} of ${questions.length}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.blue[50],
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '${question['points']} pts',
-                          style: const TextStyle(
-                            color: Colors.blue,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  
-                  // Question text
-                  Text(
-                    questionText,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 30),
-                  
-                  // Answer options
-                  Expanded(
-                    child: ListView(
-                      children: options.map((option) {
-                        final isSelected = userAnswers[questionId] == option;
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: InkWell(
-                            onTap: () => selectAnswer(questionId, option),
-                            child: Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: isSelected ? Colors.blue : Colors.white,
-                                border: Border.all(
-                                  color: isSelected ? Colors.blue : Colors.grey[300]!,
-                                  width: 2,
-                                ),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                option,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: isSelected ? Colors.white : Colors.black,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          
-          // Navigation buttons
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.2),
-                  spreadRadius: 1,
-                  blurRadius: 5,
-                  offset: const Offset(0, -3),
-                ),
-              ],
-            ),
-            child: Row(
-              children: [
-                if (currentQuestionIndex > 0)
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: previousQuestion,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.all(16),
-                        side: const BorderSide(color: Colors.blue),
-                      ),
-                      child: const Text('Previous'),
-                    ),
-                  ),
-                if (currentQuestionIndex > 0) const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton(
-                    onPressed: currentQuestionIndex < questions.length - 1
-                        ? nextQuestion
-                        : userAnswers.length == questions.length
-                            ? submitQuiz
-                            : null,
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.all(16),
-                      backgroundColor: Colors.blue,
-                    ),
-                    child: Text(
-                      currentQuestionIndex < questions.length - 1
-                          ? 'Next'
-                          : 'Submit Quiz',
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
     );
+    _shakeAnimation = Tween<double>(
+      begin: 0,
+      end: 24,
+    ).chain(CurveTween(curve: Curves.elasticIn)).animate(_animationController);
+    _confettiController = ConfettiController(
+      duration: const Duration(seconds: 3),
+    );
+    fetchQuizzes();
   }
 
-  Widget buildResultsScreen() {
-    final attempt = results!['attempt'];
-    final score = attempt['score'];
-    final maxScore = attempt['maxScore'];
-    final percentage = attempt['percentage'];
-    final answerResults = results!['results'] as List;
+  Future<void> fetchQuizzes() async {
+    try {
+      final res = await dio.get(
+        "${ApiConfig.quizByTopicEndpoint}/${widget.topicId}",
+      );
+      setState(() {
+        _questions = res.data;
+        _isLoading = false;
+      });
+      _timer.start();
+      _startQuestionTimer();
+    } catch (e) {
+      debugPrint("❌ Error fetching quiz: $e");
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Failed to load quiz")));
+    }
+  }
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Quiz Results')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
+  void _startQuestionTimer() {
+    _questionTimer.reset();
+    _questionTimer.start();
+  }
+
+  Future<void> _submitQuestionAttempt({
+    required String topicId,
+    required String quizId,
+    required String questionId,
+    required String userAnswer,
+    required int score,
+    required int timeSpent,
+  }) async {
+    try {
+      await dio.post(
+        '/api/quizzes/submit-question',
+        data: {
+          'topicId': topicId,
+          'quizId': quizId,
+          'questionId': questionId,
+          'userAnswer': userAnswer,
+          'score': score,
+          'timeSpent': timeSpent,
+        },
+      );
+    } catch (e) {
+      debugPrint('❌ Error submitting question attempt: $e');
+    }
+  }
+
+  void _checkAnswer(String answer) async {
+    if (_isAnswered) return;
+
+    final q = _questions[_currentIndex];
+    final correctAnswer = q['correctAnswer'].toString().trim().toLowerCase();
+    final isCorrect = answer.trim().toLowerCase() == correctAnswer;
+
+    setState(() {
+      _isAnswered = true;
+      _selectedAnswer = answer;
+      if (isCorrect) {
+        _correctCount++;
+        HapticFeedback.lightImpact();
+      } else {
+        _animationController.forward(from: 0);
+        HapticFeedback.heavyImpact();
+      }
+    });
+
+    // Submit attempt to backend
+    final topicId = widget.topicId;
+    final quizId = q['_id']?.toString() ?? '';
+    final questionId = q['_id']?.toString() ?? '';
+    final userAnswer = answer;
+    final score = isCorrect ? 1 : 0;
+    final timeSpent = _questionTimer.elapsed.inSeconds;
+
+    await _submitQuestionAttempt(
+      topicId: topicId,
+      quizId: quizId,
+      questionId: questionId,
+      userAnswer: userAnswer,
+      score: score,
+      timeSpent: timeSpent,
+    );
+
+    _questionTimer.stop();
+
+    Future.delayed(const Duration(seconds: 1), () {});
+  }
+
+  void _nextQuestion() {
+    if (_currentIndex < _questions.length - 1) {
+      setState(() {
+        _currentIndex++;
+        _isAnswered = false;
+        _selectedAnswer = null;
+        _fillController.clear();
+      });
+      _startQuestionTimer();
+    } else {
+      _timer.stop();
+      _submitResult();
+    }
+  }
+
+  Future<void> _submitResult() async {
+    final score = ((_correctCount / _questions.length) * 100).round();
+    final timeSpent = _timer.elapsed.inSeconds;
+
+    setState(() => _quizFinished = true);
+    _confettiController.play();
+
+    try {
+      await dio.post(
+        '/api/lessons/${widget.lessonId}/submit',
+        data: {
+          'lessonId': widget.lessonId,
+          'score': score,
+          'timeSpent': timeSpent,
+        },
+      );
+    } catch (e) {
+      debugPrint('❌ Error submitting quiz result: $e');
+    }
+
+    _showResultDialog(score);
+  }
+
+  void _showResultDialog(int score) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Stack(
+          alignment: Alignment.center,
           children: [
-            // Score card
             Container(
-              padding: const EdgeInsets.all(30),
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.all(25),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: percentage >= 70 
-                    ? [Colors.green, Colors.green[700]!]
-                    : [Colors.orange, Colors.orange[700]!],
+                borderRadius: BorderRadius.circular(20),
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF7B42F6), Color(0xFFB01EFF)],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
-                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.purple.withOpacity(0.3),
+                    blurRadius: 20,
+                    offset: const Offset(0, 5),
+                  ),
+                ],
               ),
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(
-                    Icons.emoji_events,
+                    Icons.emoji_events_rounded,
                     size: 80,
-                    color: Colors.white,
+                    color: Colors.amberAccent,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Quiz Completed!',
+                    style: GoogleFonts.poppins(
+                      fontSize: 24,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    percentage >= 70 ? 'Great Job!' : 'Keep Practicing!',
-                    style: const TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
+                    'Your Score: $score%',
+                    style: GoogleFonts.poppins(
+                      fontSize: 22,
                       color: Colors.white,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    '$score / $maxScore',
-                    style: const TextStyle(
-                      fontSize: 48,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
+                    'Correct: $_correctCount / ${_questions.length}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 16),
                   ),
                   Text(
-                    '$percentage%',
-                    style: const TextStyle(
-                      fontSize: 24,
-                      color: Colors.white,
+                    'Time: ${_timer.elapsed.inSeconds}s',
+                    style: const TextStyle(color: Colors.white70, fontSize: 16),
+                  ),
+                  const SizedBox(height: 25),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 30,
+                        vertical: 14,
+                      ),
+                    ),
+                    onPressed: () {
+                      Navigator.popUntil(context, (route) => route.isFirst);
+                    },
+                    child: Text(
+                      'Back to Lessons',
+                      style: GoogleFonts.poppins(
+                        color: Colors.purple,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 30),
-            
-            // Question results
-            ...answerResults.asMap().entries.map((entry) {
-              final index = entry.key;
-              final result = entry.value;
-              final isCorrect = result['isCorrect'];
-              
-              return Container(
-                margin: const EdgeInsets.only(bottom: 16),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: isCorrect ? Colors.green[50] : Colors.red[50],
-                  border: Border.all(
-                    color: isCorrect ? Colors.green : Colors.red,
-                    width: 2,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          isCorrect ? Icons.check_circle : Icons.cancel,
-                          color: isCorrect ? Colors.green : Colors.red,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Question ${index + 1}',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: isCorrect ? Colors.green[900] : Colors.red[900],
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '${result['points']} pts',
-                          style: TextStyle(
-                            color: isCorrect ? Colors.green[900] : Colors.red[900],
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Your answer: ${result['answer']}',
-                      style: const TextStyle(fontSize: 14),
-                    ),
-                  ],
-                ),
-              );
-            }),
-            
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => Navigator.pop(context),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.all(16),
-                  backgroundColor: Colors.blue,
-                ),
-                child: const Text(
-                  'Back to Lessons',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
+            ConfettiWidget(
+              confettiController: _confettiController,
+              blastDirectionality: BlastDirectionality.explosive,
+              emissionFrequency: 0.05,
+              numberOfParticles: 40,
+              gravity: 0.3,
             ),
           ],
         ),
       ),
     );
   }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    _confettiController.stop();
+    _confettiController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator(color: Colors.purple)),
+      );
+    }
+
+    if (_quizFinished) {
+      return Scaffold(
+        backgroundColor: Colors.deepPurple[50],
+        body: Stack(
+          alignment: Alignment.center,
+          children: [
+            ConfettiWidget(
+              confettiController: _confettiController,
+              blastDirectionality: BlastDirectionality.explosive,
+              numberOfParticles: 30,
+              gravity: 0.3,
+            ),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(
+                  Icons.stars_rounded,
+                  color: Colors.purple,
+                  size: 100,
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  "Well done!",
+                  style: GoogleFonts.poppins(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.purple.shade700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  "You've completed this quiz!",
+                  style: TextStyle(fontSize: 16, color: Colors.grey),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
+    final q = _questions[_currentIndex];
+    final progress = (_currentIndex + 1) / _questions.length;
+
+    return Scaffold(
+      backgroundColor: Colors.deepPurple[50],
+      appBar: AppBar(
+        title: Text("Question ${_currentIndex + 1}/${_questions.length}"),
+        backgroundColor: Colors.purple,
+      ),
+      body: Column(
+        children: [
+          LinearProgressIndicator(
+            value: progress,
+            color: Colors.purple,
+            backgroundColor: Colors.purple.shade100,
+            minHeight: 6,
+          ),
+          const SizedBox(height: 20),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: AnimatedBuilder(
+              animation: _animationController,
+              builder: (context, child) {
+                final shake = _shakeAnimation.value;
+                return Transform.translate(
+                  offset: Offset(
+                    _isAnswered &&
+                        _selectedAnswer != q['correctAnswer'] &&
+                        q['type'] == 'multiple_choice'
+                        ? shake - 12
+                        : 0,
+                    0,
+                  ),
+                  child: child,
+                );
+              },
+              child: Card(
+                elevation: 6,
+                shadowColor: Colors.purpleAccent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    q['question'],
+                    style: GoogleFonts.poppins(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.purple.shade900,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildQuestionType(q),
+            ),
+          ),
+          if (_isAnswered)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.arrow_forward_rounded),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purple,
+                  elevation: 6,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 40,
+                    vertical: 14,
+                  ),
+                ),
+                label: Text(
+                  _currentIndex < _questions.length - 1
+                      ? "Next Question"
+                      : "Finish Quiz",
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                onPressed: _nextQuestion,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestionType(dynamic q) {
+    final type = q['type'] ?? 'multiple_choice';
+
+    if (type == 'multiple_choice') {
+      final options = List<String>.from(q['options'] ?? []);
+      return ListView.builder(
+        itemCount: options.length,
+        itemBuilder: (context, index) {
+          final option = options[index];
+          final isCorrect = q['correctAnswer'] == option;
+          final isSelected = option == _selectedAnswer;
+
+          Color cardColor = Colors.white;
+          IconData? icon;
+
+          if (_isAnswered) {
+            if (isSelected && isCorrect) {
+              cardColor = Colors.green.shade300;
+              icon = Icons.check_circle;
+            } else if (isSelected && !isCorrect) {
+              cardColor = Colors.red.shade300;
+              icon = Icons.cancel_rounded;
+            } else if (isCorrect) {
+              cardColor = Colors.green.shade100;
+              icon = Icons.check_rounded;
+            }
+          }
+
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                if (isSelected)
+                  BoxShadow(
+                    color: Colors.purple.withOpacity(0.2),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+              ],
+            ),
+            child: ListTile(
+              leading: icon != null
+                  ? Icon(icon, color: isCorrect ? Colors.green : Colors.red)
+                  : null,
+              title: Text(option, style: GoogleFonts.poppins(fontSize: 16)),
+              onTap: _isAnswered ? null : () => _checkAnswer(option),
+            ),
+          );
+        },
+      );
+    }
+
+    if (type == 'fill_blank') {
+      return Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Your answer:",
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _fillController,
+              enabled: !_isAnswered,
+              decoration: InputDecoration(
+                hintText: "Type your answer here...",
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: Colors.purple),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            if (!_isAnswered)
+              Center(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.purple,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 40,
+                      vertical: 14,
+                    ),
+                  ),
+                  onPressed: () {
+                    final answer = _fillController.text.trim();
+                    if (answer.isNotEmpty) _checkAnswer(answer);
+                  },
+                  child: const Text(
+                    "Submit Answer",
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ),
+            if (_isAnswered) ...[
+              const SizedBox(height: 20),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 400),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color:
+                  _fillController.text.trim().toLowerCase() ==
+                      q['correctAnswer'].toString().trim().toLowerCase()
+                      ? Colors.green.shade100
+                      : Colors.red.shade100,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _fillController.text.trim().toLowerCase() ==
+                          q['correctAnswer']
+                              .toString()
+                              .trim()
+                              .toLowerCase()
+                          ? Icons.check_circle
+                          : Icons.cancel,
+                      color:
+                      _fillController.text.trim().toLowerCase() ==
+                          q['correctAnswer']
+                              .toString()
+                              .trim()
+                              .toLowerCase()
+                          ? Colors.green
+                          : Colors.red,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        _fillController.text.trim().toLowerCase() ==
+                            q['correctAnswer']
+                                .toString()
+                                .trim()
+                                .toLowerCase()
+                            ? "✅ Correct!"
+                            : "❌ Correct answer: ${q['correctAnswer']}",
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    if (type == 'true_false') {
+      final options = ['True', 'False'];
+      return Column(
+        children: options.map((opt) {
+          final isCorrect =
+              q['correctAnswer'].toString().toLowerCase() == opt.toLowerCase();
+          final isSelected = _selectedAnswer == opt;
+
+          Color cardColor = Colors.white;
+          IconData? icon;
+
+          if (_isAnswered) {
+            if (isSelected && isCorrect) {
+              cardColor = Colors.green.shade300;
+              icon = Icons.check_circle;
+            } else if (isSelected && !isCorrect) {
+              cardColor = Colors.red.shade300;
+              icon = Icons.cancel_rounded;
+            } else if (isCorrect) {
+              cardColor = Colors.green.shade100;
+              icon = Icons.check_rounded;
+            }
+          }
+
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            margin: const EdgeInsets.symmetric(vertical: 6),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: ListTile(
+              leading: icon != null
+                  ? Icon(icon, color: isCorrect ? Colors.green : Colors.red)
+                  : null,
+              title: Text(opt, style: GoogleFonts.poppins(fontSize: 16)),
+              onTap: _isAnswered ? null : () => _checkAnswer(opt),
+            ),
+          );
+        }).toList(),
+      );
+    }
+
+    if (type == 'matching') {
+      final List<dynamic> pairs = q['pairs'] ?? [];
+      final List<String> leftItems = pairs
+          .map((p) => p['left'].toString())
+          .toList();
+      final List<String> rightItems =
+      pairs.map((p) => p['right'].toString()).toList()..shuffle();
+
+      String? selectedLeft;
+      String? selectedRight;
+      Map<String, String> matched = {};
+      int wrongCount = 0;
+
+      final leftKeys = List.generate(leftItems.length, (_) => GlobalKey());
+      final rightKeys = List.generate(rightItems.length, (_) => GlobalKey());
+      List<List<Offset>> linePairs =
+      [];
+
+      return StatefulBuilder(
+        builder: (context, setStateSB) {
+          void checkMatch() {
+            if (selectedLeft != null && selectedRight != null) {
+              final isCorrect = pairs.any(
+                    (p) => p['left'] == selectedLeft && p['right'] == selectedRight,
+              );
+
+              if (isCorrect) {
+                matched[selectedLeft!] = selectedRight!;
+                HapticFeedback.lightImpact();
+
+                if (matched.length == pairs.length) {
+                  _correctCount++;
+                  setState(() => _isAnswered = true);
+                }
+
+                final leftIndex = leftItems.indexOf(selectedLeft!);
+                final rightIndex = rightItems.indexOf(selectedRight!);
+                final box =
+                context.findRenderObject() as RenderBox?;
+                final leftBox =
+                leftKeys[leftIndex].currentContext?.findRenderObject()
+                as RenderBox?;
+                final rightBox =
+                rightKeys[rightIndex].currentContext?.findRenderObject()
+                as RenderBox?;
+
+                if (box != null && leftBox != null && rightBox != null) {
+                  final leftPos = box.globalToLocal(
+                    leftBox.localToGlobal(Offset.zero),
+                  );
+                  final rightPos = box.globalToLocal(
+                    rightBox.localToGlobal(Offset.zero),
+                  );
+
+                  final start = Offset(
+                    leftPos.dx + leftBox.size.width,
+                    leftPos.dy + leftBox.size.height / 2,
+                  );
+                  final end = Offset(
+                    rightPos.dx,
+                    rightPos.dy + rightBox.size.height / 2,
+                  );
+
+                  linePairs.add([start, end]);
+                }
+              } else {
+                wrongCount++;
+                HapticFeedback.heavyImpact();
+              }
+
+              selectedLeft = null;
+              selectedRight = null;
+              setStateSB(() {});
+
+              if (wrongCount >= 3) {
+                setState(() {
+                  _isAnswered = true;
+                });
+                Future.delayed(
+                  const Duration(milliseconds: 600),
+                  _nextQuestion,
+                );
+              }
+
+              if (matched.length == pairs.length) {
+                setState(() => _isAnswered = true);
+              }
+            }
+          }
+
+          Widget buildStars() {
+            int remaining = (3 - wrongCount).clamp(0, 3);
+            return Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                3,
+                    (i) => Icon(
+                  Icons.star,
+                  color: i < remaining ? Colors.amber : Colors.grey.shade400,
+                  size: 28,
+                ),
+              ),
+            );
+          }
+
+          return Stack(
+            children: [
+              CustomPaint(
+                painter: _CurveLinePainter(linePairs),
+                size: Size.infinite,
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Ghép các cặp đúng:",
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  buildStars(),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            children: List.generate(leftItems.length, (i) {
+                              final left = leftItems[i];
+                              final isMatched = matched.containsKey(left);
+                              return GestureDetector(
+                                onTap: () {
+                                  if (!isMatched) {
+                                    selectedLeft = left;
+                                    checkMatch();
+                                    setStateSB(() {});
+                                  }
+                                },
+                                child: Card(
+                                  key: leftKeys[i],
+                                  color: isMatched
+                                      ? Colors.green.shade100
+                                      : (selectedLeft == left
+                                      ? Colors.purple.shade100
+                                      : Colors.white),
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 6,
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Text(
+                                      left,
+                                      style: GoogleFonts.poppins(fontSize: 16),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            children: List.generate(rightItems.length, (i) {
+                              final right = rightItems[i];
+                              final isMatched = matched.containsValue(right);
+                              return GestureDetector(
+                                onTap: () {
+                                  if (!isMatched) {
+                                    selectedRight = right;
+                                    checkMatch();
+                                    setStateSB(() {});
+                                  }
+                                },
+                                child: Card(
+                                  key: rightKeys[i],
+                                  color: isMatched
+                                      ? Colors.green.shade100
+                                      : (selectedRight == right
+                                      ? Colors.orange.shade100
+                                      : Colors.white),
+                                  margin: const EdgeInsets.symmetric(
+                                    vertical: 6,
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Text(
+                                      right,
+                                      style: GoogleFonts.poppins(fontSize: 16),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_isAnswered)
+                    Center(
+                      child: ElevatedButton(
+                        onPressed: _nextQuestion,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.purple,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 40,
+                            vertical: 14,
+                          ),
+                        ),
+                        child: Text(
+                          "Next",
+                          style: GoogleFonts.poppins(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    return const Center(child: Text("Unsupported question type."));
+  }
 }
 
+class _CurveLinePainter extends CustomPainter {
+  final List<List<Offset>> linePairs;
+  _CurveLinePainter(this.linePairs);
 
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = Colors.purple.shade300
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    for (var pair in linePairs) {
+      if (pair.length == 2) {
+        final start = pair[0];
+        final end = pair[1];
+        final path = Path();
+        path.moveTo(start.dx, start.dy);
+        final midX = (start.dx + end.dx) / 2;
+        path.cubicTo(midX, start.dy, midX, end.dy, end.dx, end.dy);
+        canvas.drawPath(path, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CurveLinePainter oldDelegate) =>
+      oldDelegate.linePairs != linePairs;
+}

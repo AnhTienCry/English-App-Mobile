@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../config/api_config.dart';
+import 'interactive_video_screen.dart';
 
 class VideoScreen extends StatefulWidget {
   const VideoScreen({super.key});
@@ -26,9 +28,9 @@ class _VideoScreenState extends State<VideoScreen> {
     });
 
     try {
-      final res = await dio.get('/videos');
+      final res = await dio.get(ApiConfig.videosEndpoint);
       setState(() {
-        videos = res.data['videos'] ?? [];
+        videos = res.data ?? [];
         loading = false;
       });
     } catch (e) {
@@ -41,7 +43,7 @@ class _VideoScreenState extends State<VideoScreen> {
 
   Future<void> markVideoViewed(String videoId, bool isCompleted) async {
     try {
-      await dio.patch('/videos/$videoId/mark-viewed', data: {
+      await dio.patch('${ApiConfig.markVideoViewedEndpoint}/$videoId/mark-viewed', data: {
         'isCompleted': isCompleted,
       });
       fetchVideos(); // Refresh the list
@@ -170,9 +172,10 @@ class VideoCard extends StatelessWidget {
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => VideoPlayerScreen(
-                video: video,
-                onMarkViewed: onMarkViewed,
+              builder: (context) => InteractiveVideoScreen(
+                videoId: video['_id'] ?? video['id'],
+                videoTitle: video['title'] ?? 'Video',
+                videoUrl: video['videoUrl'] ?? video['url'] ?? '',
               ),
             ),
           );

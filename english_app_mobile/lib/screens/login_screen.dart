@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/api_client.dart';
+import '../config/api_config.dart';
+import '../utils/auth_helper.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -9,7 +11,7 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final emailCtrl = TextEditingController(text: 'admin@example.com');
+  final emailCtrl = TextEditingController(text: 'student@example.com');
   final passCtrl = TextEditingController(text: '123123');
   bool loading = false;
   String? message;
@@ -29,14 +31,20 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      final res = await dio.post('/auth/login', data: {
+      // Clear any existing auth data first
+      await AuthHelper.clearAuthData();
+      
+      final res = await dio.post(ApiConfig.loginEndpoint, data: {
         'email': emailCtrl.text,
         'password': passCtrl.text,
       });
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('accessToken', res.data['accessToken']);
-      await prefs.setString('refreshToken', res.data['refreshToken']);
+      // Save auth data using helper
+      await AuthHelper.saveAuthData(
+        accessToken: res.data['accessToken'],
+        refreshToken: res.data['refreshToken'],
+        userData: res.data['user'],
+      );
 
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, '/home');
@@ -270,7 +278,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Email: admin@example.com\nPassword: 123123',
+                                'Email: student@example.com\nPassword: 123123',
                                 style: TextStyle(
                                   color: Colors.blue[600],
                                   fontSize: 11,

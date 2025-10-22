@@ -9,7 +9,7 @@ class ProgressScreen extends StatefulWidget {
 }
 
 class _ProgressScreenState extends State<ProgressScreen> {
-  Map<String, dynamic>? progressData;
+  Map<String, dynamic> progressData = {};
   bool loading = true;
   String? error;
 
@@ -26,16 +26,25 @@ class _ProgressScreenState extends State<ProgressScreen> {
     });
 
     try {
-      final res = await dio.get('/progress/me');
+      final res = await dio.get('/api/progression/user');
       setState(() {
-        progressData = res.data;
+        progressData = Map<String, dynamic>.from(res.data as Map);
         loading = false;
       });
     } catch (e) {
-      setState(() {
-        error = 'Failed to load progress';
-        loading = false;
-      });
+      try {
+        await dio.post('/api/progression/initialize');
+        final res = await dio.get('/api/progression/user');
+        setState(() {
+          progressData = Map<String, dynamic>.from(res.data as Map);
+          loading = false;
+        });
+      } catch (initError) {
+        setState(() {
+          error = 'Failed to load progress';
+          loading = false;
+        });
+      }
     }
   }
 
@@ -64,32 +73,32 @@ class _ProgressScreenState extends State<ProgressScreen> {
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(error!, style: const TextStyle(color: Colors.red)),
-                      const SizedBox(height: 20),
-                      ElevatedButton(
-                        onPressed: fetchProgress,
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                )
-              : buildProgressContent(),
+          ? Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(error!, style: const TextStyle(color: Colors.red)),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: fetchProgress,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      )
+          : buildProgressContent(),
     );
   }
 
   Widget buildProgressContent() {
-    if (progressData == null) {
+    if (progressData.isEmpty) {
       return const Center(child: Text('No data available'));
     }
 
-    final stats = progressData!['stats'];
-    final lessonProgress = progressData!['lessonProgress'] as List? ?? [];
-    final quizAttempts = progressData!['quizAttempts'] as List? ?? [];
-    final videoProgress = progressData!['videoProgress'] as List? ?? [];
+    final stats = progressData['stats'] ?? {};
+    final lessonProgress = progressData['lessonProgress'] as List? ?? [];
+    final quizAttempts = progressData['quizAttempts'] as List? ?? [];
+    final videoProgress = progressData['videoProgress'] as List? ?? [];
 
     return RefreshIndicator(
       onRefresh: fetchProgress,
@@ -165,12 +174,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 buildStatItem(
                   icon: Icons.book,
                   label: 'Lessons',
-                  value: '${stats['completedLessons']}/${stats['totalLessons']}',
+                  value: '${stats['completedLessons'] ?? 0}/${stats['totalLessons'] ?? 0}',
                 ),
                 buildStatItem(
                   icon: Icons.quiz,
                   label: 'Quizzes',
-                  value: '${stats['totalQuizAttempts']}',
+                  value: '${stats['totalQuizAttempts'] ?? 0}',
                 ),
               ],
             ),
@@ -181,12 +190,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 buildStatItem(
                   icon: Icons.score,
                   label: 'Avg Score',
-                  value: '${stats['averageQuizScore']?.toStringAsFixed(1) ?? '0'}',
+                  value: '${(stats['averageQuizScore'] ?? 0).toStringAsFixed(1)}',
                 ),
                 buildStatItem(
                   icon: Icons.play_circle,
                   label: 'Videos',
-                  value: '${stats['videosWatched']}',
+                  value: '${stats['videosWatched'] ?? 0}',
                 ),
               ],
             ),
@@ -243,7 +252,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
       children: lessons.map<Widget>((lp) {
         final progress = lp['progress'] ?? 0;
         final isCompleted = lp['isCompleted'] ?? false;
-        final lesson = lp['lesson'];
+        final lesson = lp['lesson'] ?? {};
 
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
@@ -257,7 +266,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        lesson['title'],
+                        lesson['title'] ?? 'Untitled',
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -331,10 +340,10 @@ class _ProgressScreenState extends State<ProgressScreen> {
 
     return Column(
       children: attempts.take(5).map<Widget>((attempt) {
-        final score = attempt['score'];
-        final maxScore = attempt['maxScore'];
+        final score = attempt['score'] ?? 0;
+        final maxScore = attempt['maxScore'] ?? 1;
         final percentage = maxScore > 0 ? ((score / maxScore) * 100).round() : 0;
-        final quiz = attempt['quiz'];
+        final quiz = attempt['quiz'] ?? {};
         final completedAt = attempt['completedAt'];
 
         return Card(
@@ -352,7 +361,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
               ),
             ),
             title: Text(
-              quiz['title'],
+              quiz['title'] ?? 'Quiz',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             subtitle: Text(
@@ -386,7 +395,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
 
     return Column(
       children: videos.take(5).map<Widget>((vp) {
-        final video = vp['video'];
+        final video = vp['video'] ?? {};
         final isCompleted = vp['isCompleted'] ?? false;
         final watchedDuration = vp['watchedDuration'] ?? 0;
         final duration = video['duration'] ?? 1;
@@ -401,7 +410,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
               size: 32,
             ),
             title: Text(
-              video['title'],
+              video['title'] ?? 'Video',
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             subtitle: Column(
@@ -431,9 +440,3 @@ class _ProgressScreenState extends State<ProgressScreen> {
     );
   }
 }
-
-
-
-
-
-
