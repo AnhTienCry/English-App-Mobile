@@ -1,5 +1,7 @@
+// ...existing code...
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../main.dart'; // routeObserver
 
 class ProgressScreen extends StatefulWidget {
   const ProgressScreen({super.key});
@@ -8,7 +10,7 @@ class ProgressScreen extends StatefulWidget {
   State<ProgressScreen> createState() => _ProgressScreenState();
 }
 
-class _ProgressScreenState extends State<ProgressScreen> {
+class _ProgressScreenState extends State<ProgressScreen> with RouteAware {
   Map<String, dynamic> progressData = {};
   bool loading = true;
   String? error;
@@ -19,7 +21,29 @@ class _ProgressScreenState extends State<ProgressScreen> {
     fetchProgress();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) {
+      routeObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void didPush() {
+    // screen was pushed
+    fetchProgress();
+  }
+
+  @override
+  void didPopNext() {
+    // returned to this screen — refresh progress
+    fetchProgress();
+  }
+
   Future<void> fetchProgress() async {
+    if (!mounted) return;
     setState(() {
       loading = true;
       error = null;
@@ -27,19 +51,24 @@ class _ProgressScreenState extends State<ProgressScreen> {
 
     try {
       final res = await dio.get('/api/progression/user');
+      if (!mounted) return;
       setState(() {
         progressData = Map<String, dynamic>.from(res.data as Map);
         loading = false;
       });
     } catch (e) {
+      debugPrint('fetchProgress error: $e');
       try {
         await dio.post('/api/progression/initialize');
         final res = await dio.get('/api/progression/user');
+        if (!mounted) return;
         setState(() {
           progressData = Map<String, dynamic>.from(res.data as Map);
           loading = false;
         });
       } catch (initError) {
+        debugPrint('initProgress error: $initError');
+        if (!mounted) return;
         setState(() {
           error = 'Failed to load progress';
           loading = false;
@@ -56,6 +85,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
     } catch (e) {
       return 'N/A';
     }
+  }
+
+  @override
+  void dispose() {
+    routeObserver.unsubscribe(this);
+    super.dispose();
   }
 
   @override
@@ -174,7 +209,8 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 buildStatItem(
                   icon: Icons.book,
                   label: 'Lessons',
-                  value: '${stats['completedLessons'] ?? 0}/${stats['totalLessons'] ?? 0}',
+                  value:
+                  '${stats['completedLessons'] ?? 0}/${stats['totalLessons'] ?? 0}',
                 ),
                 buildStatItem(
                   icon: Icons.quiz,
@@ -190,7 +226,9 @@ class _ProgressScreenState extends State<ProgressScreen> {
                 buildStatItem(
                   icon: Icons.score,
                   label: 'Avg Score',
-                  value: '${(stats['averageQuizScore'] ?? 0).toStringAsFixed(1)}',
+                  value: (stats['averageQuizScore'] ?? 0) is num
+                      ? (stats['averageQuizScore'] as num).toStringAsFixed(1)
+                      : '${stats['averageQuizScore'] ?? 0}',
                 ),
                 buildStatItem(
                   icon: Icons.play_circle,
@@ -279,7 +317,8 @@ class _ProgressScreenState extends State<ProgressScreen> {
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: isCompleted ? Colors.green[50] : Colors.orange[50],
+                        color:
+                        isCompleted ? Colors.green[50] : Colors.orange[50],
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
@@ -298,7 +337,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
                   children: [
                     Expanded(
                       child: LinearProgressIndicator(
-                        value: progress / 100,
+                        value: (progress is num) ? (progress / 100) : 0,
                         backgroundColor: Colors.grey[300],
                         valueColor: AlwaysStoppedAnimation<Color>(
                           isCompleted ? Colors.green : Colors.blue,
@@ -342,7 +381,8 @@ class _ProgressScreenState extends State<ProgressScreen> {
       children: attempts.take(5).map<Widget>((attempt) {
         final score = attempt['score'] ?? 0;
         final maxScore = attempt['maxScore'] ?? 1;
-        final percentage = maxScore > 0 ? ((score / maxScore) * 100).round() : 0;
+        final percentage =
+        maxScore > 0 ? ((score / maxScore) * 100).round() : 0;
         final quiz = attempt['quiz'] ?? {};
         final completedAt = attempt['completedAt'];
 
@@ -440,3 +480,4 @@ class _ProgressScreenState extends State<ProgressScreen> {
     );
   }
 }
+// ...existing code...

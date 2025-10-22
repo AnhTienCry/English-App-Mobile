@@ -97,13 +97,13 @@ class _LessonTopicsScreenState extends State<LessonTopicsScreen> {
     );
   }
 
-  void _showTopicOptions(BuildContext context, dynamic topic) {
+  void _showTopicOptions(BuildContext screenContext, dynamic topic) {
     showModalBottomSheet(
-      context: context,
+      context: screenContext,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => Container(
+      builder: (dialogContext) => Container(
         padding: const EdgeInsets.all(16),
         child: Wrap(
           children: [
@@ -111,18 +111,16 @@ class _LessonTopicsScreenState extends State<LessonTopicsScreen> {
               leading: const Icon(Icons.translate, color: Colors.green),
               title: const Text('Study Vocabulary'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(dialogContext); // Pop dialog
                 Navigator.push<bool>(
-                  context,
+                  screenContext, // Sử dụng screenContext
                   MaterialPageRoute(
                     builder: (_) => VocabularyScreen(topicId: topic['_id']),
                   ),
                 ).then((changed) {
-                  // if child indicates progress changed, bubble up to parent
                   if (changed == true) {
-                    if (mounted) Navigator.pop(context, true);
+                    if (mounted) Navigator.pop(screenContext, true); // Sử dụng screenContext
                   } else {
-                    // otherwise refresh topics list
                     _fetchTopics();
                   }
                 });
@@ -134,17 +132,18 @@ class _LessonTopicsScreenState extends State<LessonTopicsScreen> {
               title: const Text('Take Quiz'),
               subtitle: const Text('Answer questions and test your knowledge'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(dialogContext); // Pop dialog
                 Navigator.push<bool>(
-                  context,
+                  screenContext, // Sử dụng screenContext
                   MaterialPageRoute(
                     builder: (_) => QuizScreen(
                       topicId: topic['_id'],
+                      lessonId: widget.lessonId, // Thêm lessonId
                     ),
                   ),
                 ).then((changed) {
                   if (changed == true) {
-                    if (mounted) Navigator.pop(context, true);
+                    if (mounted) Navigator.pop(screenContext, true); // Sử dụng screenContext
                   } else {
                     _fetchTopics();
                   }

@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart'; // 🆕 Add provider import
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api/api_client.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
-import 'services/progress_notifier.dart'; // 🆕 Import progress notifier
+import 'services/progress_notifier.dart';
 import 'utils/auth_helper.dart';
+
+final RouteObserver<PageRoute> routeObserver = RouteObserver<PageRoute>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,8 +20,8 @@ class EnglishApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider<ProgressNotifier>( // 🆕 Wrap with Provider
-      create: (_) => progressNotifier,
+    return ChangeNotifierProvider<ProgressNotifier>(
+      create: (_) => ProgressNotifier(),
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'English Learning App',
@@ -28,6 +30,7 @@ class EnglishApp extends StatelessWidget {
           visualDensity: VisualDensity.adaptivePlatformDensity,
           fontFamily: 'Roboto',
         ),
+        navigatorObservers: [routeObserver],
         home: const AuthWrapper(),
         routes: {
           '/login': (context) => const LoginScreen(),
@@ -59,12 +62,11 @@ class _AuthWrapperState extends State<AuthWrapper> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final accessToken = prefs.getString('accessToken');
-      // Nếu có token thì cho vào home, không thì login
       setState(() {
         isAuthenticated = accessToken != null && accessToken.isNotEmpty;
       });
     } catch (e) {
-      print('Error checking auth status: $e');
+      debugPrint('Error checking auth status: $e');
       setState(() {
         isAuthenticated = false;
       });

@@ -53,6 +53,7 @@ class ApiConfig {
   static const String vocabEndpoint = '/api/vocab';
   static const String quizzesEndpoint = '/api/quizzes';
   static const String submitQuestionEndpoint = '/api/quizzes/submit-question';
+  static const String submitQuizEndpoint = '/api/quizzes/submit'; // Sửa từ submit-quiz thành submit
 
   // ============================================================
   // 🎥 Videos

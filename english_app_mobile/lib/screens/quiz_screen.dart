@@ -1,3 +1,4 @@
+// ...existing code...
 import 'package:confetti/confetti.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -17,8 +18,7 @@ class QuizScreen extends StatefulWidget {
   State<QuizScreen> createState() => _QuizScreenState();
 }
 
-class _QuizScreenState extends State<QuizScreen>
-    with SingleTickerProviderStateMixin {
+class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
   final TextEditingController _fillController = TextEditingController();
   List<dynamic> _questions = [];
   int _currentIndex = 0;
@@ -34,6 +34,8 @@ class _QuizScreenState extends State<QuizScreen>
   late Animation<double> _shakeAnimation;
   late ConfettiController _confettiController;
 
+  final List<Map<String, dynamic>> _answers = []; // Thêm để lưu answers
+
   @override
   void initState() {
     super.initState();
@@ -45,9 +47,8 @@ class _QuizScreenState extends State<QuizScreen>
       begin: 0,
       end: 24,
     ).chain(CurveTween(curve: Curves.elasticIn)).animate(_animationController);
-    _confettiController = ConfettiController(
-      duration: const Duration(seconds: 3),
-    );
+    // controller used for the full-screen celebration only
+    _confettiController = ConfettiController(duration: const Duration(seconds: 3));
     fetchQuizzes();
   }
 
@@ -56,18 +57,20 @@ class _QuizScreenState extends State<QuizScreen>
       final res = await dio.get(
         "${ApiConfig.quizByTopicEndpoint}/${widget.topicId}",
       );
+      if (!mounted) return;
       setState(() {
-        _questions = res.data;
+        _questions = res.data is List ? res.data : [];
         _isLoading = false;
       });
-      _timer.start();
-      _startQuestionTimer();
+      if (_questions.isNotEmpty) {
+        _timer.start();
+        _startQuestionTimer();
+      }
     } catch (e) {
       debugPrint("❌ Error fetching quiz: $e");
+      if (!mounted) return;
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to load quiz")));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to load quiz")));
     }
   }
 
@@ -101,13 +104,30 @@ class _QuizScreenState extends State<QuizScreen>
     }
   }
 
+  // Helper: kiểm tra answer (text) cho câu hỏi q.
+  // Hỗ trợ trường hợp q['correctAnswer'] là int (index) hoặc string (option text).
+  bool _isAnswerCorrectForQuestion(dynamic q, String answer, [int index = -1]) {
+    final corrRaw = q['correctAnswer'];
+    final answerNormalized = answer.toString().trim().toLowerCase();
+    if (corrRaw is int) {
+      int idx = index;
+      if (idx < 0) {
+        final opts = List.from(q['options'] ?? []);
+        idx = opts.indexWhere((o) => o.toString().trim().toLowerCase() == answerNormalized);
+      }
+      return idx == corrRaw;
+    }
+    final corrStr = corrRaw?.toString().trim().toLowerCase() ?? '';
+    return corrStr == answerNormalized;
+  }
+
   void _checkAnswer(String answer) async {
-    if (_isAnswered) return;
+    if (_isAnswered || _questions.isEmpty) return;
 
     final q = _questions[_currentIndex];
-    final correctAnswer = q['correctAnswer'].toString().trim().toLowerCase();
-    final isCorrect = answer.trim().toLowerCase() == correctAnswer;
+    final isCorrect = _isAnswerCorrectForQuestion(q, answer);
 
+    if (!mounted) return;
     setState(() {
       _isAnswered = true;
       _selectedAnswer = answer;
@@ -128,6 +148,15 @@ class _QuizScreenState extends State<QuizScreen>
     final score = isCorrect ? 1 : 0;
     final timeSpent = _questionTimer.elapsed.inSeconds;
 
+    // Thêm vào _answers
+    _answers.add({
+      'questionId': questionId,
+      'userAnswer': userAnswer,
+      'isCorrect': isCorrect,
+      'score': score,
+      'timeSpent': timeSpent,
+    });
+
     await _submitQuestionAttempt(
       topicId: topicId,
       quizId: quizId,
@@ -139,11 +168,14 @@ class _QuizScreenState extends State<QuizScreen>
 
     _questionTimer.stop();
 
-    Future.delayed(const Duration(seconds: 1), () {});
+    // small delay for UX
+    await Future.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
   }
 
   void _nextQuestion() {
     if (_currentIndex < _questions.length - 1) {
+      if (!mounted) return;
       setState(() {
         _currentIndex++;
         _isAnswered = false;
@@ -158,33 +190,53 @@ class _QuizScreenState extends State<QuizScreen>
   }
 
   Future<void> _submitResult() async {
-    final score = ((_correctCount / _questions.length) * 100).round();
-    final timeSpent = _timer.elapsed.inSeconds;
-
-    setState(() => _quizFinished = true);
-    _confettiController.play();
-
-    try {
-      await dio.post(
-        '/api/lessons/${widget.lessonId}/submit',
-        data: {
-          'lessonId': widget.lessonId,
-          'score': score,
-          'timeSpent': timeSpent,
-        },
-      );
-    } catch (e) {
-      debugPrint('❌ Error submitting quiz result: $e');
+    if (_questions.isEmpty) {
+      // nothing to submit
+      if (!mounted) return;
+      Navigator.pop(context, false);
+      return;
     }
 
-    _showResultDialog(score);
+    final score = ((_correctCount / _questions.length) * 100).round();
+    final finalScore = score > 0 ? score : 1; // ensure >0 to mark attempted
+    final timeSpent = _timer.elapsed.inSeconds;
+
+    if (!mounted) return;
+    setState(() => _quizFinished = true);
+
+    // play confetti on full-screen celebration
+    try {
+      _confettiController.play();
+    } catch (e) {
+      debugPrint('Confetti play error: $e');
+    }
+
+    try {
+      final response = await dio.post(ApiConfig.submitQuizEndpoint, data: {
+        'topicId': widget.topicId, // Chỉ cần topicId, backend tính từ attempts
+        // Loại bỏ lessonId, score, timeSpent, answers vì backend không dùng
+      });
+      print('Quiz submitted successfully: ${response.data}');
+      // Return true để tower biết mark completed
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      print('Error submitting quiz: $e');
+      // Có thể show error dialog thay vì pop
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Failed to submit quiz. Try again.')),
+      );
+    }
   }
 
-  void _showResultDialog(int score) {
-    showDialog(
+  Future<void> _showResultDialog(int score) async {
+    // Use a local ConfettiController for the dialog so its lifecycle is independent
+    final dialogController = ConfettiController(duration: const Duration(seconds: 3));
+    dialogController.play();
+
+    await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => Dialog(
+      builder: (dialogContext) => Dialog(
         backgroundColor: Colors.transparent,
         child: Stack(
           alignment: Alignment.center,
@@ -255,7 +307,10 @@ class _QuizScreenState extends State<QuizScreen>
                       ),
                     ),
                     onPressed: () {
-                      Navigator.popUntil(context, (route) => route.isFirst);
+                      Navigator.pop(dialogContext); // close dialog
+                      if (mounted) {
+                        Navigator.pop(context, true); // return true so caller refreshes
+                      }
                     },
                     child: Text(
                       'Back to Lessons',
@@ -268,8 +323,9 @@ class _QuizScreenState extends State<QuizScreen>
                 ],
               ),
             ),
+            // Confetti inside dialog uses the local dialogController
             ConfettiWidget(
-              confettiController: _confettiController,
+              confettiController: dialogController,
               blastDirectionality: BlastDirectionality.explosive,
               emissionFrequency: 0.05,
               numberOfParticles: 40,
@@ -279,13 +335,24 @@ class _QuizScreenState extends State<QuizScreen>
         ),
       ),
     );
+
+    // dispose local dialog controller after dialog dismissed
+    try {
+      dialogController.dispose();
+    } catch (e) {
+      debugPrint('dialog confetti dispose error: $e');
+    }
   }
 
   @override
   void dispose() {
     _animationController.dispose();
-    _confettiController.stop();
-    _confettiController.dispose();
+    try {
+      _confettiController.dispose();
+    } catch (e) {
+      debugPrint('Confetti dispose error: $e');
+    }
+    _fillController.dispose();
     super.dispose();
   }
 
@@ -294,6 +361,28 @@ class _QuizScreenState extends State<QuizScreen>
     if (_isLoading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator(color: Colors.purple)),
+      );
+    }
+
+    if (_questions.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Quiz'),
+          backgroundColor: Colors.purple,
+        ),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('No questions available for this topic.'),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Back'),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
@@ -383,7 +472,7 @@ class _QuizScreenState extends State<QuizScreen>
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Text(
-                    q['question'],
+                    q['question'] ?? '',
                     style: GoogleFonts.poppins(
                       fontSize: 20,
                       fontWeight: FontWeight.w600,
@@ -443,7 +532,7 @@ class _QuizScreenState extends State<QuizScreen>
         itemCount: options.length,
         itemBuilder: (context, index) {
           final option = options[index];
-          final isCorrect = q['correctAnswer'] == option;
+          final isCorrect = _isAnswerCorrectForQuestion(q, option, index);
           final isSelected = option == _selectedAnswer;
 
           Color cardColor = Colors.white;
@@ -549,8 +638,7 @@ class _QuizScreenState extends State<QuizScreen>
                 duration: const Duration(milliseconds: 400),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color:
-                  _fillController.text.trim().toLowerCase() ==
+                  color: _fillController.text.trim().toLowerCase() ==
                       q['correctAnswer'].toString().trim().toLowerCase()
                       ? Colors.green.shade100
                       : Colors.red.shade100,
@@ -560,18 +648,11 @@ class _QuizScreenState extends State<QuizScreen>
                   children: [
                     Icon(
                       _fillController.text.trim().toLowerCase() ==
-                          q['correctAnswer']
-                              .toString()
-                              .trim()
-                              .toLowerCase()
+                          q['correctAnswer'].toString().trim().toLowerCase()
                           ? Icons.check_circle
                           : Icons.cancel,
-                      color:
-                      _fillController.text.trim().toLowerCase() ==
-                          q['correctAnswer']
-                              .toString()
-                              .trim()
-                              .toLowerCase()
+                      color: _fillController.text.trim().toLowerCase() ==
+                          q['correctAnswer'].toString().trim().toLowerCase()
                           ? Colors.green
                           : Colors.red,
                     ),
@@ -579,10 +660,7 @@ class _QuizScreenState extends State<QuizScreen>
                     Expanded(
                       child: Text(
                         _fillController.text.trim().toLowerCase() ==
-                            q['correctAnswer']
-                                .toString()
-                                .trim()
-                                .toLowerCase()
+                            q['correctAnswer'].toString().trim().toLowerCase()
                             ? "✅ Correct!"
                             : "❌ Correct answer: ${q['correctAnswer']}",
                         style: GoogleFonts.poppins(
@@ -604,8 +682,7 @@ class _QuizScreenState extends State<QuizScreen>
       final options = ['True', 'False'];
       return Column(
         children: options.map((opt) {
-          final isCorrect =
-              q['correctAnswer'].toString().toLowerCase() == opt.toLowerCase();
+          final isCorrect = q['correctAnswer'].toString().toLowerCase() == opt.toLowerCase();
           final isSelected = _selectedAnswer == opt;
 
           Color cardColor = Colors.white;
@@ -632,9 +709,7 @@ class _QuizScreenState extends State<QuizScreen>
               borderRadius: BorderRadius.circular(16),
             ),
             child: ListTile(
-              leading: icon != null
-                  ? Icon(icon, color: isCorrect ? Colors.green : Colors.red)
-                  : null,
+              leading: icon != null ? Icon(icon, color: isCorrect ? Colors.green : Colors.red) : null,
               title: Text(opt, style: GoogleFonts.poppins(fontSize: 16)),
               onTap: _isAnswered ? null : () => _checkAnswer(opt),
             ),
@@ -645,11 +720,8 @@ class _QuizScreenState extends State<QuizScreen>
 
     if (type == 'matching') {
       final List<dynamic> pairs = q['pairs'] ?? [];
-      final List<String> leftItems = pairs
-          .map((p) => p['left'].toString())
-          .toList();
-      final List<String> rightItems =
-      pairs.map((p) => p['right'].toString()).toList()..shuffle();
+      final List<String> leftItems = pairs.map((p) => p['left'].toString()).toList();
+      final List<String> rightItems = pairs.map((p) => p['right'].toString()).toList()..shuffle();
 
       String? selectedLeft;
       String? selectedRight;
@@ -658,16 +730,13 @@ class _QuizScreenState extends State<QuizScreen>
 
       final leftKeys = List.generate(leftItems.length, (_) => GlobalKey());
       final rightKeys = List.generate(rightItems.length, (_) => GlobalKey());
-      List<List<Offset>> linePairs =
-      [];
+      List<List<Offset>> linePairs = [];
 
       return StatefulBuilder(
         builder: (context, setStateSB) {
           void checkMatch() {
             if (selectedLeft != null && selectedRight != null) {
-              final isCorrect = pairs.any(
-                    (p) => p['left'] == selectedLeft && p['right'] == selectedRight,
-              );
+              final isCorrect = pairs.any((p) => p['left'] == selectedLeft && p['right'] == selectedRight);
 
               if (isCorrect) {
                 matched[selectedLeft!] = selectedRight!;
@@ -680,31 +749,16 @@ class _QuizScreenState extends State<QuizScreen>
 
                 final leftIndex = leftItems.indexOf(selectedLeft!);
                 final rightIndex = rightItems.indexOf(selectedRight!);
-                final box =
-                context.findRenderObject() as RenderBox?;
-                final leftBox =
-                leftKeys[leftIndex].currentContext?.findRenderObject()
-                as RenderBox?;
-                final rightBox =
-                rightKeys[rightIndex].currentContext?.findRenderObject()
-                as RenderBox?;
+                final box = context.findRenderObject() as RenderBox?;
+                final leftBox = leftKeys[leftIndex].currentContext?.findRenderObject() as RenderBox?;
+                final rightBox = rightKeys[rightIndex].currentContext?.findRenderObject() as RenderBox?;
 
                 if (box != null && leftBox != null && rightBox != null) {
-                  final leftPos = box.globalToLocal(
-                    leftBox.localToGlobal(Offset.zero),
-                  );
-                  final rightPos = box.globalToLocal(
-                    rightBox.localToGlobal(Offset.zero),
-                  );
+                  final leftPos = box.globalToLocal(leftBox.localToGlobal(Offset.zero));
+                  final rightPos = box.globalToLocal(rightBox.localToGlobal(Offset.zero));
 
-                  final start = Offset(
-                    leftPos.dx + leftBox.size.width,
-                    leftPos.dy + leftBox.size.height / 2,
-                  );
-                  final end = Offset(
-                    rightPos.dx,
-                    rightPos.dy + rightBox.size.height / 2,
-                  );
+                  final start = Offset(leftPos.dx + leftBox.size.width, leftPos.dy + leftBox.size.height / 2);
+                  final end = Offset(rightPos.dx, rightPos.dy + rightBox.size.height / 2);
 
                   linePairs.add([start, end]);
                 }
@@ -721,10 +775,7 @@ class _QuizScreenState extends State<QuizScreen>
                 setState(() {
                   _isAnswered = true;
                 });
-                Future.delayed(
-                  const Duration(milliseconds: 600),
-                  _nextQuestion,
-                );
+                Future.delayed(const Duration(milliseconds: 600), _nextQuestion);
               }
 
               if (matched.length == pairs.length) {
@@ -786,20 +837,11 @@ class _QuizScreenState extends State<QuizScreen>
                                 },
                                 child: Card(
                                   key: leftKeys[i],
-                                  color: isMatched
-                                      ? Colors.green.shade100
-                                      : (selectedLeft == left
-                                      ? Colors.purple.shade100
-                                      : Colors.white),
-                                  margin: const EdgeInsets.symmetric(
-                                    vertical: 6,
-                                  ),
+                                  color: isMatched ? Colors.green.shade100 : (selectedLeft == left ? Colors.purple.shade100 : Colors.white),
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
                                   child: Padding(
                                     padding: const EdgeInsets.all(12),
-                                    child: Text(
-                                      left,
-                                      style: GoogleFonts.poppins(fontSize: 16),
-                                    ),
+                                    child: Text(left, style: GoogleFonts.poppins(fontSize: 16)),
                                   ),
                                 ),
                               );
@@ -822,20 +864,11 @@ class _QuizScreenState extends State<QuizScreen>
                                 },
                                 child: Card(
                                   key: rightKeys[i],
-                                  color: isMatched
-                                      ? Colors.green.shade100
-                                      : (selectedRight == right
-                                      ? Colors.orange.shade100
-                                      : Colors.white),
-                                  margin: const EdgeInsets.symmetric(
-                                    vertical: 6,
-                                  ),
+                                  color: isMatched ? Colors.green.shade100 : (selectedRight == right ? Colors.orange.shade100 : Colors.white),
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
                                   child: Padding(
                                     padding: const EdgeInsets.all(12),
-                                    child: Text(
-                                      right,
-                                      style: GoogleFonts.poppins(fontSize: 16),
-                                    ),
+                                    child: Text(right, style: GoogleFonts.poppins(fontSize: 16)),
                                   ),
                                 ),
                               );
@@ -903,6 +936,6 @@ class _CurveLinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_CurveLinePainter oldDelegate) =>
-      oldDelegate.linePairs != linePairs;
+  bool shouldRepaint(_CurveLinePainter oldDelegate) => oldDelegate.linePairs != linePairs;
 }
+// ...existing code...
