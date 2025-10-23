@@ -1,9 +1,11 @@
-// ...existing code...
+// lib/screens/lesson_topics_screen.dart
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../api/api_client.dart';
 import '../config/api_config.dart';
 import 'vocabulary_screen.dart';
-import 'quiz_screen.dart'; // ✅ thay quiz_list_screen.dart bằng quiz_screen.dart
+import 'quiz_screen.dart';
 
 class LessonTopicsScreen extends StatefulWidget {
   final String lessonId;
@@ -20,8 +22,9 @@ class LessonTopicsScreen extends StatefulWidget {
 }
 
 class _LessonTopicsScreenState extends State<LessonTopicsScreen> {
-  List<dynamic> topics = [];
-  bool isLoading = true;
+  List<dynamic> _topics = [];
+  bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -32,63 +35,126 @@ class _LessonTopicsScreenState extends State<LessonTopicsScreen> {
   Future<void> _fetchTopics() async {
     if (!mounted) return;
     setState(() {
-      isLoading = true;
+      _loading = true;
+      _error = null;
     });
     try {
-      // use dio baseUrl configured in api_client.dart
-      final res = await dio.get('/api/topics/${widget.lessonId}');
+      final res = await dio.get("${ApiConfig.baseUrl}/api/topics/by-lesson/${widget.lessonId}");
       final data = res.data;
-      List<dynamic> list = [];
-      if (data is List) {
-        list = data;
-      } else if (data is Map) {
-        // backend may return { topics: [...] } or the array directly
-        list = (data['topics'] is List) ? data['topics'] : (data['data'] is List ? data['data'] : []);
+      if (data is Map && data['items'] is List) {
+        setState(() => _topics = List.from(data['items']));
+      } else if (data is List) {
+        setState(() => _topics = data);
+      } else {
+        setState(() => _error = "Unexpected response");
       }
-      if (!mounted) return;
-      setState(() {
-        topics = list;
-        isLoading = false;
-      });
+    } on DioException catch (e) {
+      setState(() => _error = e.response?.data?.toString() ?? e.message);
     } catch (e) {
-      debugPrint('Error loading topics: $e');
-      if (!mounted) return;
-      setState(() => isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to load topics')),
-      );
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
+    if (_loading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: Center(child: CircularProgressIndicator(color: Colors.purple)),
       );
     }
 
     return Scaffold(
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
-        title: Text(widget.lessonTitle),
-        backgroundColor: Colors.blue,
+        title: Text(widget.lessonTitle, style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        backgroundColor: Colors.purple,
       ),
       body: RefreshIndicator(
         onRefresh: _fetchTopics,
-        child: ListView.builder(
-          itemCount: topics.length,
+        child: _error != null
+            ? ListView(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                _error!,
+                style: GoogleFonts.poppins(color: Colors.red),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        )
+            : ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: _topics.length,
           itemBuilder: (context, index) {
-            final topic = topics[index] as Map? ?? {};
+            final topic = _topics[index] as Map? ?? {};
+            final completed = topic['completed'] == true;
+            final title = topic['title'] ?? 'Untitled Topic';
+
             return Card(
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              elevation: 3,
+              color: completed ? Colors.green.shade100 : Colors.white,
               child: ListTile(
-                title: Text(
-                  topic['title'] ?? 'Untitled Topic',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
+                leading: Icon(
+                  completed ? Icons.check_circle : Icons.menu_book_outlined,
+                  color: completed ? Colors.green : Colors.purple,
                 ),
-                subtitle: Text(topic['description'] ?? ''),
-                trailing: const Icon(Icons.menu_book_outlined),
-                onTap: () => _showTopicOptions(context, topic),
+                title: Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600,
+                    color: completed ? Colors.green.shade900 : Colors.black87,
+                  ),
+                ),
+                subtitle: Text(
+                  topic['description'] ?? '',
+                  style: GoogleFonts.poppins(fontSize: 13, color: Colors.black54),
+                ),
+                trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+                onTap: () async {
+                  final topicId = topic['id'] ?? topic['_id'];
+                  // Mở bottom sheet chọn học từ vựng hoặc quiz
+                  showModalBottomSheet(
+                    context: context,
+                    builder: (_) => Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.menu_book),
+                          title: const Text('Học từ vựng'),
+                          onTap: () async {
+                            Navigator.pop(context); // Đóng bottom sheet
+                            final result = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => VocabularyScreen(topicId: topicId),
+                              ),
+                            );
+                            if (result == true) _fetchTopics();
+                          },
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.quiz),
+                          title: const Text('Làm bài Quiz'),
+                          onTap: () async {
+                            Navigator.pop(context); // Đóng bottom sheet
+                            final result = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => QuizScreen(topicId: topicId),
+                              ),
+                            );
+                            if (result == true) _fetchTopics();
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
               ),
             );
           },
@@ -96,64 +162,4 @@ class _LessonTopicsScreenState extends State<LessonTopicsScreen> {
       ),
     );
   }
-
-  void _showTopicOptions(BuildContext screenContext, dynamic topic) {
-    showModalBottomSheet(
-      context: screenContext,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (dialogContext) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.translate, color: Colors.green),
-              title: const Text('Study Vocabulary'),
-              onTap: () {
-                Navigator.pop(dialogContext); // Pop dialog
-                Navigator.push<bool>(
-                  screenContext, // Sử dụng screenContext
-                  MaterialPageRoute(
-                    builder: (_) => VocabularyScreen(topicId: topic['_id']),
-                  ),
-                ).then((changed) {
-                  if (changed == true) {
-                    if (mounted) Navigator.pop(screenContext, true); // Sử dụng screenContext
-                  } else {
-                    _fetchTopics();
-                  }
-                });
-              },
-            ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.quiz, color: Colors.purple),
-              title: const Text('Take Quiz'),
-              subtitle: const Text('Answer questions and test your knowledge'),
-              onTap: () {
-                Navigator.pop(dialogContext); // Pop dialog
-                Navigator.push<bool>(
-                  screenContext, // Sử dụng screenContext
-                  MaterialPageRoute(
-                    builder: (_) => QuizScreen(
-                      topicId: topic['_id'],
-                      lessonId: widget.lessonId, // Thêm lessonId
-                    ),
-                  ),
-                ).then((changed) {
-                  if (changed == true) {
-                    if (mounted) Navigator.pop(screenContext, true); // Sử dụng screenContext
-                  } else {
-                    _fetchTopics();
-                  }
-                });
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
-// ...existing code...

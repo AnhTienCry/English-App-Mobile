@@ -1,76 +1,96 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../config/api_config.dart'; // Giả định có ApiConfig.baseUrl
+import 'package:http/http.dart' as http;
 
-class TowerProvider with ChangeNotifier {
-  // dùng Map thay vì model cục bộ
-  List<Map<String, dynamic>> _levels = [];
-  bool _isLoading = false;
-  String? _error;
+class TowerProvider extends ChangeNotifier {
+  final String baseUrl = 'https://your-api-domain.com/api/tower-levels';
+  final String? authToken; // optional
+  TowerProvider({this.authToken});
 
-  List<Map<String, dynamic>> get levels => _levels;
-  bool get isLoading => _isLoading;
-  String? get error => _error;
+  List<dynamic> _towerLevels = [];        // danh sách level (có thể không kèm lock)
+  List<dynamic> _levelsWithLock = [];     // danh sách kèm locked=true/false (từ /progress/me)
+  Set<String> _completedLevelIds = {};    // id level đã hoàn thành
+  bool isLoading = false;
 
-  String _idOf(Map<String, dynamic> m) => (m['_id'] ?? m['id'] ?? '').toString();
+  List<dynamic> get towerLevels => _towerLevels;
+  List<dynamic> get levelsWithLock => _levelsWithLock;
+  bool isLockedByNumber(int levelNumber) {
+    final found = _levelsWithLock.firstWhere(
+          (e) => e['levelNumber'] == levelNumber,
+      orElse: () => null,
+    );
+    return found == null ? false : (found['locked'] == true);
+  }
 
-  // Fetch levels từ API
-  Future<void> fetchLevels() async {
-    _isLoading = true;
-    _error = null;
+  Map<String, String> get _headers => {
+    'Content-Type': 'application/json',
+    if (authToken != null) 'Authorization': 'Bearer $authToken',
+  };
+
+  Future<void> fetchTowerLevels() async {
+    isLoading = true;
     notifyListeners();
-
     try {
-      final dio = Dio();
-      final res = await dio.get('${ApiConfig.baseUrl}/api/tower-levels');
-      final data = List<Map<String, dynamic>>.from(res.data ?? []);
-      _levels = data.map((json) {
-        // ensure keys exist and normalize
-        return {
-          ...json,
-          '_id': (json['_id'] ?? json['id'] ?? '').toString(),
-          'levelNumber': json['levelNumber'] ?? json['level'] ?? 0,
-          'title': json['title'] ?? json['name'] ?? '',
-          'rewardPoints': json['rewardPoints'] ?? json['reward'] ?? 0,
-          'isCompleted': json['isCompleted'] ?? json['completed'] ?? false,
-        };
-      }).toList();
-
-      // Load trạng thái completed từ local storage
-      final prefs = await SharedPreferences.getInstance();
-      for (var i = 0; i < _levels.length; i++) {
-        final key = 'tower_${_idOf(_levels[i])}_completed';
-        _levels[i]['isCompleted'] = prefs.getBool(key) ?? (_levels[i]['isCompleted'] ?? false);
+      final res = await http.get(Uri.parse(baseUrl), headers: _headers);
+      if (res.statusCode == 200) {
+        _towerLevels = jsonDecode(res.body);
       }
-
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _error = 'Failed to load tower levels';
-      _isLoading = false;
+    } finally {
+      isLoading = false;
       notifyListeners();
     }
   }
 
-  // Mark level completed (sau khi submit quiz thành công)
-  Future<void> markLevelCompleted(String levelId) async {
-    final idx = _levels.indexWhere((l) => _idOf(l) == levelId);
-    if (idx == -1) return; // not found
-
-    _levels[idx]['isCompleted'] = true;
-
-    // Lưu local
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('tower_${levelId}_completed', true);
-
-    notifyListeners();
+  /// NEW: Lấy lock/unlock theo user
+  Future<void> fetchMyProgress() async {
+    final res = await http.get(Uri.parse('$baseUrl/progress/me'), headers: _headers);
+    if (res.statusCode == 200) {
+      final data = jsonDecode(res.body);
+      _levelsWithLock = (data['items'] as List<dynamic>)..sort((a,b)=>a['levelNumber'].compareTo(b['levelNumber']));
+      _completedLevelIds = {...List<String>.from(data['completedLevelIds'] ?? [])};
+      notifyListeners();
+    }
   }
 
-  // Check if level is unlocked (level 1 luôn unlock, các level sau nếu level trước completed)
-  bool isLevelUnlocked(int index) {
-    if (index == 0) return true;
-    if (index - 1 < 0 || index - 1 >= _levels.length) return false;
-    return _levels[index - 1]['isCompleted'] == true;
+  Future<List<dynamic>> fetchQuizOfLevel(String levelId) async {
+    final res = await http.get(Uri.parse('$baseUrl/$levelId'), headers: _headers);
+    if (res.statusCode == 200) {
+      final data = jsonDecode(res.body);
+      return data['quizzes'] ?? [];
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>?> fetchTowerByNumber(int levelNumber) async {
+    final res = await http.get(Uri.parse('$baseUrl/by-number/$levelNumber'), headers: _headers);
+    if (res.statusCode == 200) {
+      return jsonDecode(res.body);
+    }
+    return null;
+  }
+
+  /// Hoàn thành level → backend sẽ chấm/ghi nhận & mở level kế tiếp
+  Future<bool> completeTowerLevel({
+    required String levelId,
+    required int score,
+    required int timeSpent,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$baseUrl/complete'),
+      headers: _headers,
+      body: jsonEncode({'levelId': levelId, 'score': score, 'timeSpent': timeSpent}),
+    );
+
+    if (res.statusCode == 200) {
+      final data = jsonDecode(res.body);
+      final passed = data['passed'] == true;
+      if (passed) {
+        _completedLevelIds.add(levelId);
+        // reload lock state để mở tầng tiếp theo
+        await fetchMyProgress();
+      }
+      return passed;
+    }
+    return false;
   }
 }

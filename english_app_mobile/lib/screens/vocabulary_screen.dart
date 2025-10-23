@@ -1,10 +1,10 @@
 import 'dart:math';
 
 import 'package:confetti/confetti.dart';
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 
+import '../api/api_client.dart'; // ✅ dùng dio toàn cục có sẵn token
 import '../config/api_config.dart';
 
 class VocabularyScreen extends StatefulWidget {
@@ -18,7 +18,6 @@ class VocabularyScreen extends StatefulWidget {
 
 class _VocabularyScreenState extends State<VocabularyScreen>
     with SingleTickerProviderStateMixin {
-  final Dio _dio = Dio(BaseOptions(baseUrl: ApiConfig.baseUrl));
   final FlutterTts _flutterTts = FlutterTts();
   late ConfettiController _confettiController;
 
@@ -34,7 +33,11 @@ class _VocabularyScreenState extends State<VocabularyScreen>
     _confettiController = ConfettiController(
       duration: const Duration(seconds: 3),
     );
-    if (widget.topicId != null) fetchVocab();
+    if (widget.topicId != null && widget.topicId!.isNotEmpty) {
+      fetchVocab();
+    } else {
+      isLoading = false;
+    }
   }
 
   Future<void> _initTTS() async {
@@ -46,20 +49,34 @@ class _VocabularyScreenState extends State<VocabularyScreen>
   Future<void> fetchVocab() async {
     try {
       setState(() => isLoading = true);
-      final res = await _dio.get(
+      // ✅ dùng dio toàn cục (đã set baseUrl + Authorization)
+      final res = await dio.get(
         "${ApiConfig.vocabByTopicEndpoint}/${widget.topicId}",
       );
+
+      final data = res.data;
+      final list =
+      (data is List) ? data.where((e) => e != null).toList() : <dynamic>[];
+
       setState(() {
-        vocabList = res.data;
+        vocabList = list;
+        currentIndex = 0;
+        showBack = false;
         isLoading = false;
       });
     } catch (e) {
       debugPrint("❌ Error fetching vocab: $e");
       setState(() => isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load vocabulary")),
+        );
+      }
     }
   }
 
-  Future<void> _speak(String text) async {
+  Future<void> _speak(String? text) async {
+    if (text == null || text.trim().isEmpty) return;
     await _flutterTts.stop();
     await _flutterTts.speak(text);
   }
@@ -122,8 +139,8 @@ class _VocabularyScreenState extends State<VocabularyScreen>
               TextButton(
                 onPressed: () {
                   _confettiController.stop();
-                  Navigator.pop(context);
-                  Navigator.pop(context);
+                  Navigator.pop(context);           // đóng dialog
+                  Navigator.pop(context, true);     // ✅ báo màn trước refresh
                 },
                 child: const Text("Back to Lessons"),
               ),
@@ -172,29 +189,32 @@ class _VocabularyScreenState extends State<VocabularyScreen>
               child: ListView.builder(
                 itemCount: vocabList.length,
                 itemBuilder: (context, index) {
-                  final v = vocabList[index];
+                  final v = (vocabList[index] as Map?) ?? {};
+                  final word = (v['word'] ?? '').toString();
+                  final meaning = (v['meaning'] ?? '').toString();
+
                   return ListTile(
                     leading: CircleAvatar(
                       backgroundColor: Colors.indigo.shade100,
                       child: Text(
-                        v['word'][0].toUpperCase(),
+                        word.isNotEmpty ? word[0].toUpperCase() : '?',
                         style: const TextStyle(color: Colors.indigo),
                       ),
                     ),
                     title: Text(
-                      v['word'],
+                      word.isEmpty ? '—' : word,
                       style: const TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 16,
                       ),
                     ),
                     subtitle: Text(
-                      v['meaning'] ?? "",
+                      meaning,
                       style: const TextStyle(color: Colors.black54),
                     ),
                     trailing: IconButton(
                       icon: const Icon(Icons.volume_up, color: Colors.indigo),
-                      onPressed: () => _speak(v['word']),
+                      onPressed: () => _speak(word),
                     ),
                   );
                 },
@@ -208,6 +228,9 @@ class _VocabularyScreenState extends State<VocabularyScreen>
 
   @override
   Widget build(BuildContext context) {
+    final total = vocabList.length;
+    final progress = total == 0 ? 0.0 : (currentIndex + 1) / total;
+
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
@@ -218,7 +241,7 @@ class _VocabularyScreenState extends State<VocabularyScreen>
           IconButton(
             icon: const Icon(Icons.list_alt_rounded, color: Colors.white),
             tooltip: "View all words",
-            onPressed: _showVocabList,
+            onPressed: vocabList.isEmpty ? null : _showVocabList,
           ),
         ],
       ),
@@ -227,62 +250,70 @@ class _VocabularyScreenState extends State<VocabularyScreen>
           : vocabList.isEmpty
           ? const Center(child: Text("No vocabulary found."))
           : Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(height: 20),
+
+          // ✅ Progress Bar
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: LinearProgressIndicator(
+              value: progress,
+              color: Colors.indigo,
+              backgroundColor: Colors.indigo.shade100,
+              minHeight: 6,
+              borderRadius: const BorderRadius.all(Radius.circular(10)),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ✅ Flashcard
+          Expanded(
+            child: Center(
+              child: GestureDetector(
+                onTap: () => setState(() => showBack = !showBack),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 400),
+                  transitionBuilder: (child, anim) {
+                    final rotate = Tween(begin: pi, end: 0.0).animate(anim);
+                    return AnimatedBuilder(
+                      animation: rotate,
+                      child: child,
+                      builder: (context, child) {
+                        final isUnder = (ValueKey(showBack) != child!.key);
+                        final value = isUnder
+                            ? min(rotate.value, pi / 2)
+                            : rotate.value;
+                        return Transform(
+                          transform: Matrix4.rotationY(value),
+                          alignment: Alignment.center,
+                          child: child,
+                        );
+                      },
+                    );
+                  },
+                  child: showBack ? _buildBackCard() : _buildFrontCard(),
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // ✅ Prev / Next
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 40),
+            child: Row(
               children: [
-                const SizedBox(height: 20),
-                // ✅ Progress Bar
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: LinearProgressIndicator(
-                    value: (currentIndex + 1) / vocabList.length,
-                    color: Colors.indigo,
-                    backgroundColor: Colors.indigo.shade100,
-                    minHeight: 6,
-                    borderRadius: const BorderRadius.all(Radius.circular(10)),
-                  ),
-                ),
-                const SizedBox(height: 20),
-
-                // ✅ Flashcard
                 Expanded(
-                  child: Center(
-                    child: GestureDetector(
-                      onTap: () => setState(() => showBack = !showBack),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 400),
-                        transitionBuilder: (child, anim) {
-                          final rotate = Tween(
-                            begin: pi,
-                            end: 0.0,
-                          ).animate(anim);
-                          return AnimatedBuilder(
-                            animation: rotate,
-                            child: child,
-                            builder: (context, child) {
-                              final isUnder =
-                                  (ValueKey(showBack) != child!.key);
-                              final value = isUnder
-                                  ? min(rotate.value, pi / 2)
-                                  : rotate.value;
-                              return Transform(
-                                transform: Matrix4.rotationY(value),
-                                alignment: Alignment.center,
-                                child: child,
-                              );
-                            },
-                          );
-                        },
-                        child: showBack ? _buildBackCard() : _buildFrontCard(),
-                      ),
-                    ),
+                  child: OutlinedButton.icon(
+                    onPressed: currentIndex == 0 ? null : _prevCard,
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    label: const Text('Prev'),
                   ),
                 ),
-
-                const SizedBox(height: 20),
-
-                // ✅ Next button
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 40),
+                const SizedBox(width: 12),
+                Expanded(
                   child: ElevatedButton.icon(
                     onPressed: _nextCard,
                     style: ElevatedButton.styleFrom(
@@ -304,12 +335,17 @@ class _VocabularyScreenState extends State<VocabularyScreen>
                 ),
               ],
             ),
+          ),
+        ],
+      ),
     );
   }
 
   // 🌟 Mặt trước — chỉ hiển thị từ và nút loa
   Widget _buildFrontCard() {
-    final v = vocabList[currentIndex];
+    final v = (vocabList[currentIndex] as Map?) ?? {};
+    final word = (v['word'] ?? '').toString();
+
     return Card(
       key: const ValueKey(true),
       elevation: 8,
@@ -330,7 +366,7 @@ class _VocabularyScreenState extends State<VocabularyScreen>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                v['word'],
+                word.isEmpty ? '—' : word,
                 style: const TextStyle(
                   fontSize: 48,
                   color: Colors.white,
@@ -345,7 +381,7 @@ class _VocabularyScreenState extends State<VocabularyScreen>
                   color: Colors.white,
                   size: 38,
                 ),
-                onPressed: () => _speak(v['word']),
+                onPressed: () => _speak(word),
               ),
               const SizedBox(height: 14),
               const Text(
@@ -365,7 +401,10 @@ class _VocabularyScreenState extends State<VocabularyScreen>
 
   // 🌟 Mặt sau — hiển thị nghĩa, ví dụ, nút loa
   Widget _buildBackCard() {
-    final v = vocabList[currentIndex];
+    final v = (vocabList[currentIndex] as Map?) ?? {};
+    final meaning = (v['meaning'] ?? '').toString();
+    final example = (v['example'] ?? '').toString();
+
     return Card(
       key: const ValueKey(false),
       elevation: 8,
@@ -388,7 +427,7 @@ class _VocabularyScreenState extends State<VocabularyScreen>
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  v['meaning'] ?? "",
+                  meaning.isEmpty ? '—' : meaning,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 26,
@@ -397,11 +436,11 @@ class _VocabularyScreenState extends State<VocabularyScreen>
                   ),
                 ),
                 const SizedBox(height: 20),
-                if (v['example'] != null)
+                if (example.isNotEmpty)
                   Column(
                     children: [
                       Text(
-                        '"${v['example']}"',
+                        '"$example"',
                         textAlign: TextAlign.center,
                         style: const TextStyle(
                           fontSize: 16,
@@ -416,7 +455,7 @@ class _VocabularyScreenState extends State<VocabularyScreen>
                           color: Colors.white,
                           size: 30,
                         ),
-                        onPressed: () => _speak(v['example']),
+                        onPressed: () => _speak(example),
                       ),
                     ],
                   ),

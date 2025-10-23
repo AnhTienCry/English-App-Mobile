@@ -38,7 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadUserData() async {
     try {
       final profileRes = await dio.get(ApiConfig.profileEndpoint);
-      
+
       // Try to get progress data
       try {
         final progressRes = await dio.get(ApiConfig.progressionEndpoint);
@@ -224,7 +224,7 @@ class HomeTab extends StatelessWidget {
 
   Widget _buildHeader(BuildContext context) {
     final nickname = userProfile?['nickname'] ?? 'Student';
-    
+
     return Container(
       width: double.infinity,
       decoration: const BoxDecoration(
@@ -325,7 +325,7 @@ class HomeTab extends StatelessWidget {
                   'Start Lesson',
                   Icons.play_circle_outline,
                   Colors.blue,
-                  () => Navigator.push(
+                      () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const LessonScreen()),
                   ),
@@ -338,7 +338,7 @@ class HomeTab extends StatelessWidget {
                   'Flashcards',
                   Icons.style_outlined,
                   Colors.green,
-                  () => Navigator.push(
+                      () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const VocabularyScreen()),
                   ),
@@ -355,7 +355,7 @@ class HomeTab extends StatelessWidget {
                   'Video Learning',
                   Icons.video_library_outlined,
                   Colors.orange,
-                  () => Navigator.push(
+                      () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const VideoLearningScreen()),
                   ),
@@ -368,7 +368,7 @@ class HomeTab extends StatelessWidget {
                   'Take Quiz',
                   Icons.quiz_outlined,
                   Colors.purple,
-                  () {
+                      () {
                     // TODO: Replace with actual topic selection logic
                     _showQuizSelection(context);
                   },
@@ -385,7 +385,7 @@ class HomeTab extends StatelessWidget {
                   'Translation',
                   Icons.translate,
                   Colors.teal,
-                  () => Navigator.push(
+                      () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const TranslationScreen()),
                   ),
@@ -398,7 +398,7 @@ class HomeTab extends StatelessWidget {
                   'Progress',
                   Icons.trending_up,
                   Colors.indigo,
-                  () => Navigator.push(
+                      () => Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const ProgressScreen()),
                   ),
@@ -412,12 +412,12 @@ class HomeTab extends StatelessWidget {
   }
 
   Widget _buildActionCard(
-    BuildContext context,
-    String title,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) {
+      BuildContext context,
+      String title,
+      IconData icon,
+      Color color,
+      VoidCallback onTap,
+      ) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(15),
@@ -643,13 +643,13 @@ class HomeTab extends StatelessWidget {
   }
 
   Widget _buildActivityItem(
-    IconData icon,
-    Color color,
-    String title,
-    String time, {
-    String? score,
-    VoidCallback? onTap,
-  }) {
+      IconData icon,
+      Color color,
+      String title,
+      String time, {
+        String? score,
+        VoidCallback? onTap,
+      }) {
     return InkWell(
       onTap: onTap, // Make the item tappable
       child: Padding(

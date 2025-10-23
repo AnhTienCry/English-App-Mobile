@@ -26,25 +26,22 @@ class ApiConfig {
   // 👤 User Profile & Progression
   // ============================================================
   static const String profileEndpoint = '/api/protected/me';
-  static const String progressionEndpoint = '/api/progression/user';
-  static const String initializeProgressEndpoint = '/api/progression/initialize';
+  static const String progressionEndpoint = '/api/progressions/me';
+  static const String initializeProgressEndpoint = '/api/progressions/initialize';
+  static const String completeTopicEndpoint = '/api/progressions/complete-topic';
+  static const String topicStatusEndpoint = '/api/progressions/topic-status';
+  static const String leaderboardEndpoint = '/api/progressions/leaderboard';
+  static const String gamificationEndpoint = '/api/progressions/gamification';
+  static const String unlockNextEndpoint = '/api/progressions/unlock-next';
+  static const String updateStreakEndpoint = '/api/progressions/update-streak';
 
   // ============================================================
-  // 📘 Lessons & Topics (🆕 Added)
+  // 📘 Lessons & Topics
   // ============================================================
-  /// Lấy danh sách toàn bộ bài học
   static const String lessonsEndpoint = '/api/lessons';
-
-  /// Lấy danh sách bài học đã xuất bản (cho học viên)
   static const String publishedLessonsEndpoint = '/api/lessons/published';
-
-  /// Lấy danh sách topic theo Lesson ID
   static const String topicsByLessonEndpoint = '/api/topics'; // + /:lessonId
-
-  /// Lấy danh sách vocab theo Topic ID
   static const String vocabByTopicEndpoint = '/api/vocab/topic'; // + /:topicId
-
-  /// Lấy danh sách quiz theo Topic ID
   static const String quizByTopicEndpoint = '/api/quizzes/topic'; // + /:topicId
 
   // ============================================================
@@ -53,7 +50,7 @@ class ApiConfig {
   static const String vocabEndpoint = '/api/vocab';
   static const String quizzesEndpoint = '/api/quizzes';
   static const String submitQuestionEndpoint = '/api/quizzes/submit-question';
-  static const String submitQuizEndpoint = '/api/quizzes/submit'; // Sửa từ submit-quiz thành submit
+  static const String submitQuizEndpoint = '/api/quizzes/submit';
 
   // ============================================================
   // 🎥 Videos
@@ -64,9 +61,9 @@ class ApiConfig {
   static const String addWordDefinitionEndpoint = '/api/videos'; // + /:id/words
   static const String getWordDefinitionEndpoint = '/api/videos/words'; // + /:word
 
-  // ===========================================================...
+  // ============================================================
   // 📝 Topic Attempts
-  // ===========================================================...
+  // ============================================================
   static const String topicAttemptsEndpoint = '/api/topic-attempts';
 
   // ============================================================
@@ -84,4 +81,21 @@ class ApiConfig {
   // 🔔 Notifications
   // ============================================================
   static const String notificationsEndpoint = '/api/notifications';
+
+  // ============================================================
+  // 🏰 Tower (Challenge)
+  // ============================================================
+  static const String towerLevelsEndpoint = '/api/tower-levels';
+  static const String towerProgressEndpoint = '/api/tower-levels/progress/me'; // 🆕 thêm dòng này
+  static const String towerCompleteEndpoint = '/api/tower/complete';
+
+  // ============================================================
+  // 👥 Users
+  // ============================================================
+  static const String usersEndpoint = '/api/users';
+
+  // ============================================================
+  // 📊 Reports
+  // ============================================================
+  static const String reportsEndpoint = '/api/reports';
 }
