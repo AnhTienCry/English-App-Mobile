@@ -15,6 +15,8 @@ import 'notification_screen.dart';
 import 'debug_screen.dart';
 import 'translation_screen.dart';
 import 'interactive_video_screen.dart'; // Import InteractiveVideoScreen
+import '../utils/lesson_navigator.dart';
+import 'lesson_option_screen.dart'; // <-- thêm import
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -153,7 +155,22 @@ class _HomeScreenState extends State<HomeScreen> {
         child: BottomNavigationBar(
           type: BottomNavigationBarType.fixed,
           currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
+          onTap: (index) {
+            // nếu là tab Lessons (index = 1) thì mở LessonOptionScreen thay vì chuyển tab
+            if (index == 1) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => LessonOptionScreen(
+                    lessonId: '', // nếu có id mặc định, truyền vào đây
+                    lessonTitle: 'Lessons',
+                  ),
+                ),
+              );
+              return;
+            }
+            setState(() => _currentIndex = index);
+          },
           selectedItemColor: Colors.blue,
           unselectedItemColor: Colors.grey,
           backgroundColor: Colors.white,
@@ -325,10 +342,18 @@ class HomeTab extends StatelessWidget {
                   'Start Lesson',
                   Icons.play_circle_outline,
                   Colors.blue,
-                      () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const LessonScreen()),
-                  ),
+                      () async {
+                    // Fetch lesson đầu tiên hoặc cho user chọn (giả sử bạn có list lessons)
+                    // Ví dụ: final lessons = await fetchLessons(); // nếu có API
+                    // final firstLesson = lessons.isNotEmpty ? lessons[0] : null;
+                    // if (firstLesson != null) {
+                    openLessonOptions(
+                      context,
+                      lessonId: 'FIRST_LESSON_ID_HERE', // Thay bằng ID thật, ví dụ 'lesson1'
+                      lessonTitle: 'Lesson 1', // Thay bằng title thật
+                    );
+                    // }
+                  },
                 ),
               ),
               const SizedBox(width: 15),

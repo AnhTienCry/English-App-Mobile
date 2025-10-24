@@ -122,35 +122,8 @@ class _LessonScreenState extends State<LessonScreen> with TickerProviderStateMix
           l['percent'] = finalPercent;
           l['isCompleted'] = serverMarkedCompleted || finalPercent >= 100;
 
-          // recompute locked using serverCompletedLessons + local/server percent threshold (>=70)
-          bool locked = true;
-          if (i == 0) {
-            locked = false;
-          } else {
-            final prevLesson = lessons[i - 1];
-            final prevLessonId = (prevLesson['id'] ?? prevLesson['_id'] ?? '').toString();
-
-            // server explicit completion overrides (unlock)
-            final prevServerCompleted = serverCompletedLessons.contains(prevLessonId);
-
-            // percent reported by server for previous lesson
-            final prevServerPercentRaw = prevLesson['percent'] ?? 0;
-            final prevServerPercent = (prevServerPercentRaw is int)
-                ? prevServerPercentRaw
-                : int.tryParse(prevServerPercentRaw?.toString() ?? '0') ?? 0;
-
-            // local saved percent (higher priority if available)
-            final prevLocalPercent = _localLessonPercents[prevLessonId] ?? 0;
-            final prevFinalPercent = prevLocalPercent > 0 ? prevLocalPercent : prevServerPercent;
-
-            // unlock rule: server says previous completed OR (previous was marked completed locally (all topics done) AND percent >= 70)
-            final prevMarkedCompletedLocally = prevLesson['isCompleted'] == true;
-            locked = !(prevServerCompleted || (prevMarkedCompletedLocally && prevFinalPercent >= 70));
-
-            // if this lesson already completed, ensure it's unlocked
-            if (l['isCompleted'] == true) locked = false;
-          }
-          l['locked'] = locked;
+          // All lessons unlocked — user can open any lesson in any order
+          l['locked'] = false;
 
           // persist higher local percent
           final prevLocal = _localLessonPercents[lessonId] ?? 0;
@@ -540,29 +513,9 @@ class _LessonScreenState extends State<LessonScreen> with TickerProviderStateMix
 
   // recompute locked state for lessons using serverCompleted + local percents (threshold 70)
   void _recomputeLocks() {
+    // Unlock every lesson so user can open any lesson freely
     for (var i = 0; i < _lessons.length; i++) {
-      final l = _lessons[i];
-      final lessonId = (l['id'] ?? l['_id'] ?? '').toString();
-      if (i == 0) {
-        l['locked'] = false;
-        continue;
-      }
-      final prev = _lessons[i - 1];
-      final prevId = (prev['id'] ?? prev['_id'] ?? '').toString();
-
-      final prevServerCompleted = _serverCompletedLessons.contains(prevId);
-
-      final prevServerPercentRaw = prev['percent'] ?? 0;
-      final prevServerPercent = (prevServerPercentRaw is int)
-          ? prevServerPercentRaw
-          : int.tryParse(prevServerPercentRaw?.toString() ?? '0') ?? 0;
-
-      final prevLocalPercent = _localLessonPercents[prevId] ?? 0;
-      final prevFinalPercent = prevLocalPercent > 0 ? prevLocalPercent : prevServerPercent;
-
-      bool locked = !(prevServerCompleted || prevFinalPercent >= 70);
-      if (l['isCompleted'] == true) locked = false;
-      l['locked'] = locked;
+      _lessons[i]['locked'] = false;
     }
   }
 
