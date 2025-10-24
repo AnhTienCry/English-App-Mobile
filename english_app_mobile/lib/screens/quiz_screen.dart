@@ -19,15 +19,16 @@ class QuizScreen extends StatefulWidget {
   State<QuizScreen> createState() => _QuizScreenState();
 }
 
-class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
+class _QuizScreenState extends State<QuizScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _fillController = TextEditingController();
   List<dynamic> _questions = [];
   int _currentIndex = 0;
   int _correctCount = 0;
+  bool _quizFinished = false;
+  int _timeSpentSeconds = 0;
   bool _isAnswered = false;
   String? _selectedAnswer;
   bool _isLoading = true;
-  bool _quizFinished = false;
   final Stopwatch _timer = Stopwatch();
   final Stopwatch _questionTimer = Stopwatch();
 
@@ -55,7 +56,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
 
   Future<void> fetchQuizzes() async {
     try {
-      // nếu quiz theo topic
       final res = await dio.get("${ApiConfig.quizByTopicEndpoint}/${widget.topicId}");
       setState(() {
         _questions = res.data is List ? List.from(res.data) : <dynamic>[];
@@ -67,9 +67,11 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
       }
     } catch (e) {
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to load quiz")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load quiz")),
+        );
+      }
     }
   }
 
@@ -135,7 +137,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
       }
     });
 
-    // Với tower mode, có thể không cần submit per-question; giữ lại để bạn tracking
     final topicId = widget.topicId;
     final quizId = q['_id']?.toString() ?? '';
     final questionId = q['_id']?.toString() ?? '';
@@ -183,139 +184,166 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _submitResult() async {
-    if (_questions.isEmpty) {
+      if (_questions.isEmpty) {
+        if (!mounted) return;
+        Navigator.pop(context, false);
+        return;
+      }
+
+      final score = ((_correctCount / _questions.length) * 100).round();
+      final timeSpent = _timer.elapsed.inSeconds;
+
       if (!mounted) return;
-      Navigator.pop(context, false);
-      return;
-    }
+      setState(() => _quizFinished = true);
 
-    final score = ((_correctCount / _questions.length) * 100).round();
-    final timeSpent = _timer.elapsed.inSeconds;
-
-    if (!mounted) return;
-    setState(() => _quizFinished = true);
-
-    try {
-      _confettiController.play();
-    } catch (_) {}
-
-    // 🔥 Tower mode: gọi /complete, đợi animation, rồi pop(progress) về TowerScreen
-    if (_isTowerMode) {
       try {
-        final res = await dio.post(
-          "${ApiConfig.baseUrl}/api/tower-levels/complete",
-          data: {'levelId': widget.levelId, 'score': score, 'timeSpent': timeSpent},
-        );
-        final data = res.data;
+        _confettiController.play();
+      } catch (_) {}
 
-        if (data['passed'] == true) {
-          if (!mounted) return;
-          // hiển thị animation
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => LevelUpAnimation(level: data['level']?['levelNumber'] ?? 1),
-            ),
-          );
-          // trả progress mới về TowerScreen để setState ngay, không cần refetch
-          if (mounted) Navigator.pop(context, data['progress']);
-          return;
-        } else {
-          // chưa đạt → show dialog kết quả rồi quay lại không unlock
-          if (!mounted) return;
-          await _showResultDialog(score);
+      // Tower mode: call submit with levelId
+      if (_isTowerMode) {
+        try {
+          final payload = {
+            'topicId': widget.topicId,
+            'lessonId': widget.lessonId,
+            'levelId': widget.levelId,
+            'score': score,
+            'timeSpent': timeSpent,
+            'correctCount': _correctCount,
+            'totalQuestions': _questions.length,
+            'answers': _answers,
+          };
+
+          final res = await dio.post(ApiConfig.submitQuizEndpoint, data: payload);
+          final data = res.data;
+          debugPrint('Tower submit response: $data');
+
+          if (data is Map && data['passed'] == true) {
+            if (!mounted) return;
+            await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => LevelUpAnimation(level: data['level']?['levelNumber'] ?? 1),
+              ),
+            );
+            if (mounted) {
+              // return progress + local stats so caller can update UI immediately
+              Navigator.pop(context, {
+                'passed': true,
+                'progress': data['progress'],
+                'correctCount': _correctCount,
+                'totalQuestions': _questions.length,
+                'lessonId': widget.lessonId,
+                'topicId': widget.topicId,
+              });
+            }
+            return;
+          } else {
+            if (!mounted) return;
+            await _showResultDialog(score);
+            if (mounted) Navigator.pop(context, {
+              'passed': false,
+              'correctCount': _correctCount,
+              'totalQuestions': _questions.length,
+              'lessonId': widget.lessonId,
+              'topicId': widget.topicId,
+            });
+            return;
+          }
+        } catch (e) {
+          debugPrint('❌ Tower submit error: $e');
           if (mounted) Navigator.pop(context, null);
           return;
         }
+      }
+
+      // Topic/Lesson mode
+      try {
+        final payload = {
+          'topicId': widget.topicId,
+          'lessonId': widget.lessonId,
+          'score': score,
+          'timeSpent': timeSpent,
+          'correctCount': _correctCount,
+          'totalQuestions': _questions.length,
+          'answers': _answers,
+        };
+
+        final response = await dio.post(ApiConfig.submitQuizEndpoint, data: payload);
+        debugPrint('Quiz submitted: ${response.data}');
+
+        final resp = response.data;
+        if (resp is Map && resp['passed'] == true) {
+          await _showResultDialog(score);
+          if (mounted) Navigator.pop(context, {
+            'passed': true,
+            'progress': resp['progress'] ?? resp['progression'] ?? {},
+            'correctCount': _correctCount,
+            'totalQuestions': _questions.length,
+            'lessonId': widget.lessonId,
+            'topicId': widget.topicId,
+          });
+          return;
+        }
+
+        if (!mounted) return;
+        await _showResultDialog(score);
+        // always return stats so caller can update local UI
+        if (mounted) Navigator.pop(context, {
+          'passed': (resp is Map && resp['passed'] == true),
+          'correctCount': _correctCount,
+          'totalQuestions': _questions.length,
+          'lessonId': widget.lessonId,
+          'topicId': widget.topicId,
+        });
       } catch (e) {
-        debugPrint('❌ Tower complete error: $e');
-        // fallback: quay lại không unlock
-        if (mounted) Navigator.pop(context, null);
-        return;
+        debugPrint('Error submitting quiz: $e');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Failed to submit quiz.')));
       }
     }
 
-    // 🌿 Topic/Lesson mode bình thường
-    try {
-      final response = await dio.post(ApiConfig.submitQuizEndpoint, data: {
-        'topicId': widget.topicId,
-        'lessonId': widget.lessonId,
-        'score': score,
-        'timeSpent': timeSpent,
-      });
-      debugPrint('Quiz submitted: ${response.data}');
-      if (!mounted) return;
-      await _showResultDialog(score); // Dialog hiển thị điểm & pop(true) khi đóng
-    } catch (e) {
-      debugPrint('Error submitting quiz: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Failed to submit quiz.')));
-    }
-  }
-
   Future<void> _showResultDialog(int score) async {
-    final dialogController = ConfettiController(duration: const Duration(seconds: 3));
-    dialogController.play();
-
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 20),
-              padding: const EdgeInsets.all(25),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF7B42F6), Color(0xFFB01EFF)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.emoji_events_rounded, size: 80, color: Colors.amberAccent),
-                  const SizedBox(height: 10),
-                  Text('Quiz Completed!',
-                      style: GoogleFonts.poppins(fontSize: 24, color: Colors.white, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 20),
-                  Text('Your Score: $score%',
-                      style: GoogleFonts.poppins(fontSize: 22, color: Colors.white, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 25),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                      padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 14),
-                    ),
-                    onPressed: () {
-                      Navigator.pop(dialogContext);
-                      if (mounted) Navigator.pop(context, true);
-                    },
-                    child: Text('Back to Lessons',
-                        style: GoogleFonts.poppins(color: Colors.purple, fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
-            ),
-            ConfettiWidget(
-              confettiController: dialogController,
-              blastDirectionality: BlastDirectionality.explosive,
-              emissionFrequency: 0.05,
-              numberOfParticles: 40,
-              gravity: 0.3,
-            ),
-          ],
-        ),
-      ),
+      builder: (dialogContext) => _ConfettiResultDialog(score: score),
     );
-    dialogController.dispose();
+  }
+
+  Future<void> _finishQuiz() async {
+    if (_quizFinished) return;
+    setState(() => _quizFinished = true);
+
+    final int totalQuestions = _questions.length;
+    final bool passed = _correctCount >= 7;
+
+    final body = {
+      'topicId': widget.topicId,
+      'lessonId': widget.lessonId,
+      'levelId': widget.levelId,
+      'correctCount': _correctCount,
+      'totalQuestions': totalQuestions,
+      'timeSpent': _timeSpentSeconds,
+    };
+
+    try {
+      await dio.post(ApiConfig.submitQuizEndpoint, data: body);
+    } catch (e) {
+      // ignore network error for UX
+      debugPrint('Finish submit error: $e');
+    }
+
+    if (!mounted) return;
+    // include stats so caller (LessonTopicsScreen) updates percent/completion immediately
+    Navigator.pop(context, {
+      'passed': passed,
+      'correctCount': _correctCount,
+      'totalQuestions': totalQuestions,
+      'lessonId': widget.lessonId,
+      'topicId': widget.topicId,
+    });
   }
 
   @override
@@ -451,7 +479,18 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
                   _currentIndex < _questions.length - 1 ? "Next Question" : "Finish Quiz",
                   style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
                 ),
-                onPressed: _nextQuestion,
+                onPressed: () {
+                  final bool isLast = _currentIndex == (_questions.length - 1);
+                  if (isLast) {
+                    _finishQuiz();
+                  } else {
+                    setState(() => _currentIndex++);
+                    _isAnswered = false;
+                    _selectedAnswer = null;
+                    _fillController.clear();
+                    _startQuestionTimer();
+                  }
+                },
               ),
             ),
         ],
@@ -462,7 +501,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
   Widget _buildQuestionType(dynamic q) {
     final type = q['type'] ?? 'multiple_choice';
 
-    // MULTIPLE CHOICE
     if (type == 'multiple_choice') {
       final options = List<String>.from(q['options'] ?? []);
       return ListView.builder(
@@ -515,7 +553,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
       );
     }
 
-    // FILL IN THE BLANK
     if (type == 'fill_blank') {
       return Padding(
         padding: const EdgeInsets.all(16),
@@ -560,7 +597,7 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: _fillController.text.trim().toLowerCase() ==
-                      q['correctAnswer'].toString().trim().toLowerCase()
+                          q['correctAnswer'].toString().trim().toLowerCase()
                       ? Colors.green.shade100
                       : Colors.red.shade100,
                   borderRadius: BorderRadius.circular(14),
@@ -569,11 +606,11 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
                   children: [
                     Icon(
                       _fillController.text.trim().toLowerCase() ==
-                          q['correctAnswer'].toString().trim().toLowerCase()
+                              q['correctAnswer'].toString().trim().toLowerCase()
                           ? Icons.check_circle
                           : Icons.cancel,
                       color: _fillController.text.trim().toLowerCase() ==
-                          q['correctAnswer'].toString().trim().toLowerCase()
+                              q['correctAnswer'].toString().trim().toLowerCase()
                           ? Colors.green
                           : Colors.red,
                     ),
@@ -581,7 +618,7 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
                     Expanded(
                       child: Text(
                         _fillController.text.trim().toLowerCase() ==
-                            q['correctAnswer'].toString().trim().toLowerCase()
+                                q['correctAnswer'].toString().trim().toLowerCase()
                             ? "✅ Correct!"
                             : "❌ Correct answer: ${q['correctAnswer']}",
                         style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
@@ -595,7 +632,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
       );
     }
 
-    // TRUE / FALSE
     if (type == 'true_false') {
       final options = ['True', 'False'];
       return Column(
@@ -633,7 +669,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
       );
     }
 
-    // MATCHING
     if (type == 'matching') {
       final List<dynamic> pairs = q['pairs'] ?? [];
       final List<String> leftItems = pairs.map((p) => p['left'].toString()).toList();
@@ -654,7 +689,7 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(
             3,
-                (i) => Icon(
+            (i) => Icon(
               Icons.star,
               color: i < remaining ? Colors.amber : Colors.grey.shade400,
               size: 24,
@@ -736,7 +771,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      // Cột trái
                       Expanded(
                         child: Column(
                           children: List.generate(leftItems.length, (i) {
@@ -767,7 +801,6 @@ class _QuizScreenState extends State<QuizScreen> with TickerProviderStateMixin {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      // Cột phải
                       Expanded(
                         child: Column(
                           children: List.generate(rightItems.length, (i) {
@@ -854,4 +887,88 @@ class _CurveLinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_CurveLinePainter oldDelegate) => oldDelegate.linePairs != linePairs;
+}
+
+// Confetti result dialog (self-contained controller)
+class _ConfettiResultDialog extends StatefulWidget {
+  final int score;
+  const _ConfettiResultDialog({Key? key, required this.score}) : super(key: key);
+
+  @override
+  State<_ConfettiResultDialog> createState() => _ConfettiResultDialogState();
+}
+
+class _ConfettiResultDialogState extends State<_ConfettiResultDialog> {
+  late final ConfettiController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ConfettiController(duration: const Duration(seconds: 3));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.play();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 20),
+            padding: const EdgeInsets.all(25),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF7B42F6), Color(0xFFB01EFF)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.emoji_events_rounded, size: 80, color: Colors.amberAccent),
+                const SizedBox(height: 10),
+                Text('Quiz Completed!',
+                    style: GoogleFonts.poppins(fontSize: 24, color: Colors.white, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 20),
+                Text('Your Score: ${widget.score}%',
+                    style: GoogleFonts.poppins(fontSize: 22, color: Colors.white, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 25),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                    padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 14),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context); // chỉ đóng dialog
+                  },
+                  child: Text('Back to Lessons',
+                      style: GoogleFonts.poppins(color: Colors.purple, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
+          ConfettiWidget(
+            confettiController: _controller,
+            blastDirectionality: BlastDirectionality.explosive,
+            emissionFrequency: 0.05,
+            numberOfParticles: 40,
+            gravity: 0.3,
+          ),
+        ],
+      ),
+    );
+  }
 }

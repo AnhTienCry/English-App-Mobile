@@ -62,14 +62,14 @@ class _TowerScreenState extends State<TowerScreen> {
       return;
     }
     // Mở QuizScreen theo chế độ TOWER: chỉ truyền levelId
-    await Navigator.push(
+    final result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => QuizScreen(levelId: levelId),
       ),
     );
-    // Sau khi làm xong có thể refresh list nếu muốn
-    // await _fetchLevels();
+
+    if (mounted) await _fetchLevels(); // refresh levels sau khi quay lại
   }
 
   @override
